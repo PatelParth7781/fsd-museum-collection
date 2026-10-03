@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Shield, UserCheck, UserX, Loader2, AlertCircle } from 'lucide-react';
+import { Shield, UserCheck, UserX, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -24,6 +24,8 @@ export default function AdminUsers() {
   const [editTarget, setEditTarget] = useState<Profile | null>(null);
   const [newRole, setNewRole] = useState<UserRole>('visitor');
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -65,6 +67,22 @@ export default function AdminUsers() {
     fetch();
   };
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.id === currentUser?.id) {
+      toast('You cannot delete your own account', 'error');
+      return;
+    }
+    setDeleting(true);
+    const { error } = await supabase.from('profiles').delete().eq('id', deleteTarget.id);
+    if (error) { toast('Failed to delete user', 'error'); setDeleting(false); return; }
+    toast('User deleted', 'success');
+    await logAction('user_deleted', 'profile', deleteTarget.id, `User ${deleteTarget.email} deleted by ${currentUser?.email}`);
+    setDeleting(false);
+    setDeleteTarget(null);
+    fetch();
+  };
+
   return (
     <DashboardLayout title="User Management">
       {loading ? <div className="card p-6"><TableSkeleton /></div> : error ? <ErrorState onRetry={fetch} /> : users.length === 0 ? (
@@ -101,6 +119,7 @@ export default function AdminUsers() {
                         <button onClick={() => toggleActive(user)} className="p-1.5 rounded-lg text-stone-400 hover:text-amber-600 hover:bg-amber-50" aria-label="Toggle active">
                           {user.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
                         </button>
+                        <button onClick={() => setDeleteTarget(user)} className="p-1.5 rounded-lg text-stone-400 hover:text-red-600 hover:bg-red-50" aria-label="Delete user"><Trash2 size={16} /></button>
                       </div>
                     </td>
                   </tr>
@@ -131,6 +150,26 @@ export default function AdminUsers() {
               <button onClick={() => setEditTarget(null)} className="btn-secondary">Cancel</button>
               <button onClick={handleRoleChange} disabled={saving || editTarget.id === currentUser?.id} className="btn-primary">
                 {saving ? <Loader2 className="animate-spin" size={16} /> : null} Save
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete User">
+        {deleteTarget && (
+          <div className="space-y-4">
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-sm text-red-700">
+              <AlertCircle size={16} /> This will permanently delete this user's profile. This action cannot be undone.
+            </div>
+            <div className="p-3 bg-stone-50 rounded-lg">
+              <p className="text-sm font-medium text-stone-800">{deleteTarget.full_name}</p>
+              <p className="text-xs text-stone-500">{deleteTarget.email}</p>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setDeleteTarget(null)} className="btn-secondary">Cancel</button>
+              <button onClick={handleDelete} disabled={deleting} className="btn-primary bg-red-600 hover:bg-red-700">
+                {deleting ? <Loader2 className="animate-spin" size={16} /> : null} Delete User
               </button>
             </div>
           </div>

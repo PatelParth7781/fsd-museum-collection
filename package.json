@@ -8,7 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "server": "npm --prefix server start",
+    "server:dev": "npm --prefix server run dev"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
