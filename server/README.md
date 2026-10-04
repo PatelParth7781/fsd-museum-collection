@@ -1,30 +1,30 @@
 # Museum Collection Management System
 
-A MERN stack application to manage museum artifacts, artists, categories, exhibitions, reviews and more.
+A MERN stack application to manage museum artifacts, artists, categories, exhibitions and reviews.
 
 ## Tech Stack
-- **MongoDB** (Mongoose)
-- **Express.js** and **Node.js** (REST API in `server/`)
-- **React** + TypeScript + Vite + Tailwind CSS (frontend in `src/`)
+- MongoDB (Mongoose)
+- Express.js and Node.js (REST API in `server/`)
+- React + TypeScript + Vite + Tailwind CSS (frontend in `src/`)
 
 ## Run Locally
 
-1. Backend
+Backend:
 ```bash
-   cd server
-   npm install
-   npm run seed
-   npm run dev
+cd server
+npm install
+npm run seed
+npm run dev
 ```
-   Runs on http://localhost:5000
+Runs on http://localhost:5000
 
-2. Frontend (from the root folder)
+Frontend (from the root folder):
 ```bash
-   npm install
-   npm run dev
+npm install
+npm run dev
 ```
-   Runs on http://localhost:5173
+Runs on http://localhost:5173
 
 ## Environment Variables
-- `server/.env`: `PORT`, `MONGO_URI`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `CLIENT_URL`
-- root `.env`: `VITE_API_URL`
+- `server/.env`: PORT, MONGO_URI, JWT_SECRET, JWT_EXPIRES_IN, CLIENT_URL
+- root `.env`: VITE_API_URL
