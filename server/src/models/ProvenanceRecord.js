@@ -12,6 +12,14 @@ const provenanceRecordSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    start_date: {
+      type: String,
+      default: null,
+    },
+    end_date: {
+      type: String,
+      default: null,
+    },
     owner_name: {
       type: String,
       required: [true, 'Owner name is required'],
@@ -31,6 +39,10 @@ const provenanceRecordSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+    },
+    description: {
+      type: String,
+      default: '',
     },
     supporting_documentation: {
       type: String,
@@ -52,12 +64,21 @@ const provenanceRecordSchema = new mongoose.Schema(
       virtuals: true,
       transform: (_, ret) => {
         ret.id = ret._id.toString();
+        ret.description = ret.description || ret.notes || '';
         delete ret.__v;
         return ret;
       },
     },
+    toObject: { virtuals: true },
   }
 );
+
+provenanceRecordSchema.virtual('artifact', {
+  ref: 'Artifact',
+  localField: 'artifact_id',
+  foreignField: '_id',
+  justOne: true,
+});
 
 export const ProvenanceRecord = mongoose.model('ProvenanceRecord', provenanceRecordSchema);
 export default ProvenanceRecord;

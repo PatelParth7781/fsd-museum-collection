@@ -10,4 +10,8 @@ export { ConservationRecord } from './ConservationRecord.js';
 export { ProvenanceRecord } from './ProvenanceRecord.js';
 export { Review } from './Review.js';
 export { CartItem } from './CartItem.js';
+export { Cart } from './Cart.js';
 export { AuditLog } from './AuditLog.js';
+export { Favorite } from './Favorite.js';
+export { CategoryLike } from './CategoryLike.js';
+export { Comment } from './Comment.js';

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Pencil, Trash2, MapPin, Building2 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -25,15 +25,14 @@ export default function AdminLocations() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('locations').select('*').order('building').order('gallery');
-    if (error) { setError(true); setLoading(false); return; }
-    const locs = data ?? [];
-    const counts = await Promise.all(locs.map(async (l) => {
-      const { count } = await supabase.from('artifacts').select('*', { count: 'exact', head: true }).eq('current_location_id', l.id);
-      return { ...l, artifact_count: count ?? 0 };
-    }));
-    setLocations(counts);
-    setLoading(false);
+    try {
+      const data = await api.get('/locations');
+      setLocations(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -46,28 +45,34 @@ export default function AdminLocations() {
     if (!form.building.trim() || !form.gallery.trim()) { toast('Building and gallery are required', 'error'); return; }
     setFormLoading(true);
     const payload = { ...form, room: form.room || null, shelf_or_display: form.shelf_or_display || null };
-    if (editTarget) {
-      const { error } = await supabase.from('locations').update(payload).eq('id', editTarget.id);
-      if (error) { toast('Failed to update location', 'error'); setFormLoading(false); return; }
-      toast('Location updated', 'success');
-      await logAction('location_updated', 'location', editTarget.id, `Location "${form.building} — ${form.gallery}" updated by ${profile?.email}`);
-    } else {
-      const { error } = await supabase.from('locations').insert(payload);
-      if (error) { toast('Failed to create location', 'error'); setFormLoading(false); return; }
-      toast('Location created', 'success');
-      await logAction('location_created', 'location', null, `Location "${form.building} — ${form.gallery}" created by ${profile?.email}`);
+    try {
+      if (editTarget) {
+        await api.put(`/locations/${editTarget.id}`, payload);
+        toast('Location updated', 'success');
+        await logAction('location_updated', 'location', editTarget.id, `Location "${form.building} — ${form.gallery}" updated by ${profile?.email}`);
+      } else {
+        await api.post('/locations', payload);
+        toast('Location created', 'success');
+        await logAction('location_created', 'location', null, `Location "${form.building} — ${form.gallery}" created by ${profile?.email}`);
+      }
+      setModalOpen(false);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Operation failed', 'error');
+    } finally {
+      setFormLoading(false);
     }
-    setFormLoading(false);
-    setModalOpen(false);
-    fetch();
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('locations').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete location', 'error'); return; }
-    toast('Location deleted', 'success');
-    fetch();
+    try {
+      await api.del(`/locations/${deleteTarget}`);
+      toast('Location deleted', 'success');
+      fetch();
+    } catch {
+      toast('Failed to delete location', 'error');
+    }
   };
 
   const buildings = [...new Set(locations.map((l) => l.building))];

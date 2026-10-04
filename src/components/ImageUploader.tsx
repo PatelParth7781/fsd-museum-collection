@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { Upload, X, Star, Loader2, ImageIcon } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import type { ArtifactImage } from '@/types';
 
@@ -30,33 +30,29 @@ export function ImageUploader({
           failCount++;
           continue;
         }
-        const ext = file.name.split('.').pop();
-        const fileName = `${artifactId}/${crypto.randomUUID()}.${ext}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('artifacts')
-          .upload(fileName, file, { cacheControl: '3600', upsert: false });
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
 
-        if (uploadError) {
-          failCount++;
-          continue;
-        }
+          const uploadRes = await api.post('/upload', formData);
+          const imageUrl = uploadRes.url || uploadRes.publicUrl;
 
-        const { data: urlData } = supabase.storage.from('artifacts').getPublicUrl(fileName);
-        const imageUrl = urlData.publicUrl;
+          if (!imageUrl) {
+            failCount++;
+            continue;
+          }
 
-        const isFirst = images.length === 0 && successCount === 0;
-        const { error: dbError } = await supabase.from('artifact_images').insert({
-          artifact_id: artifactId,
-          image_url: imageUrl,
-          caption: '',
-          is_primary: isFirst,
-        });
+          const isFirst = images.length === 0 && successCount === 0;
+          await api.post(`/artifacts/${artifactId}/images`, {
+            image_url: imageUrl,
+            caption: '',
+            is_primary: isFirst,
+          });
 
-        if (dbError) {
-          failCount++;
-        } else {
           successCount++;
+        } catch {
+          failCount++;
         }
       }
 
@@ -69,30 +65,31 @@ export function ImageUploader({
   );
 
   const setPrimary = async (imageId: string) => {
-    await supabase
-      .from('artifact_images')
-      .update({ is_primary: false })
-      .eq('artifact_id', artifactId);
-    await supabase
-      .from('artifact_images')
-      .update({ is_primary: true })
-      .eq('id', imageId);
-    onImagesChanged();
-    toast('Primary image updated', 'success');
+    try {
+      await api.put(`/artifacts/${artifactId}/images/${imageId}`, { is_primary: true });
+      onImagesChanged();
+      toast('Primary image updated', 'success');
+    } catch {
+      toast('Failed to update primary image', 'error');
+    }
   };
 
-  const deleteImage = async (imageId: string, imageUrl: string) => {
-    const filePath = imageUrl.split('/artifacts/')[1];
-    if (filePath) {
-      await supabase.storage.from('artifacts').remove([filePath]);
+  const deleteImage = async (imageId: string) => {
+    try {
+      await api.del(`/artifacts/${artifactId}/images/${imageId}`);
+      onImagesChanged();
+      toast('Image removed', 'info');
+    } catch {
+      toast('Failed to delete image', 'error');
     }
-    await supabase.from('artifact_images').delete().eq('id', imageId);
-    onImagesChanged();
-    toast('Image removed', 'info');
   };
 
   const updateCaption = async (imageId: string, caption: string) => {
-    await supabase.from('artifact_images').update({ caption }).eq('id', imageId);
+    try {
+      await api.put(`/artifacts/${artifactId}/images/${imageId}`, { caption });
+    } catch {
+      // ignore
+    }
   };
 
   return (
@@ -166,7 +163,7 @@ export function ImageUploader({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    deleteImage(img.id, img.image_url);
+                    deleteImage(img.id);
                   }}
                   className="p-2 bg-white/90 rounded-full text-red-600 hover:bg-white"
                   aria-label="Delete image"

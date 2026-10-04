@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Brush, AlertTriangle, Loader2 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -34,20 +34,23 @@ export default function CuratorConservation() {
   const fetch = useCallback(async () => {
     setLoading(true);
     setError(false);
-    const { data, error } = await supabase
-      .from('conservation_records')
-      .select('*, artifact:artifacts(*, artifact_images(*), category:categories(*))')
-      .order('assessment_date', { ascending: false });
-    if (error) { setError(true); setLoading(false); return; }
-    setRecords(data ?? []);
-    const overdue = (data ?? []).filter((r) => r.next_inspection_date && new Date(r.next_inspection_date) < new Date());
-    setAttentionArtifacts(overdue);
-    setLoading(false);
+    try {
+      const data = await api.get('/curator/conservation');
+      setRecords(data ?? []);
+      const overdue = (data ?? []).filter((r: any) => r.next_inspection_date && new Date(r.next_inspection_date) < new Date());
+      setAttentionArtifacts(overdue);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     fetch();
-    supabase.from('artifacts').select('*, artifact_images(*), category:categories(*)').order('name').limit(100).then(({ data }) => setArtifacts(data ?? []));
+    api.get('/artifacts', { limit: 100 })
+      .then((res) => setArtifacts(res.artifacts ?? []))
+      .catch(() => {});
   }, [fetch]);
 
   const openCreate = () => {
@@ -70,22 +73,29 @@ export default function CuratorConservation() {
       next_inspection_date: form.next_inspection_date || null,
       notes: form.notes || null,
     };
-    const { error } = await supabase.from('conservation_records').insert(payload);
-    if (error) { toast('Failed to add conservation record', 'error'); setFormLoading(false); return; }
-    toast('Conservation record added', 'success');
-    const artName = artifacts.find((a) => a.id === form.artifact_id)?.name ?? 'Unknown';
-    await logAction('conservation_added', 'conservation_record', null, `Conservation record for "${artName}" added by ${profile?.email}`);
-    setFormLoading(false);
-    setModalOpen(false);
-    fetch();
+    try {
+      await api.post('/curator/conservation', payload);
+      toast('Conservation record added', 'success');
+      const artName = artifacts.find((a) => a.id === form.artifact_id)?.name ?? 'Unknown';
+      await logAction('conservation_added', 'conservation_record', null, `Conservation record for "${artName}" added by ${profile?.email}`);
+      setModalOpen(false);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Failed to add conservation record', 'error');
+    } finally {
+      setFormLoading(false);
+    }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('conservation_records').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete record', 'error'); return; }
-    toast('Conservation record deleted', 'success');
-    fetch();
+    try {
+      await api.del(`/curator/conservation/${deleteTarget}`);
+      toast('Conservation record deleted', 'success');
+      fetch();
+    } catch {
+      toast('Failed to delete record', 'error');
+    }
   };
 
   return (

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Plus, Trash2, ScrollText, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -27,18 +27,21 @@ export default function CuratorProvenance() {
   const fetch = useCallback(async () => {
     setLoading(true);
     setError(false);
-    const { data, error } = await supabase
-      .from('provenance_records')
-      .select('*, artifact:artifacts(*, artifact_images(*), category:categories(*))')
-      .order('start_date', { ascending: true });
-    if (error) { setError(true); setLoading(false); return; }
-    setRecords(data ?? []);
-    setLoading(false);
+    try {
+      const data = await api.get('/curator/provenance');
+      setRecords(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     fetch();
-    supabase.from('artifacts').select('*, artifact_images(*), category:categories(*)').order('name').limit(100).then(({ data }) => setArtifacts(data ?? []));
+    api.get('/artifacts', { limit: 100 })
+      .then((res) => setArtifacts(res.artifacts ?? []))
+      .catch(() => {});
   }, [fetch]);
 
   const openCreate = () => {
@@ -60,22 +63,29 @@ export default function CuratorProvenance() {
       ownership_type: form.ownership_type,
       description: form.description || null,
     };
-    const { error } = await supabase.from('provenance_records').insert(payload);
-    if (error) { toast('Failed to add provenance record', 'error'); setFormLoading(false); return; }
-    toast('Provenance record added', 'success');
-    const artName = artifacts.find((a) => a.id === form.artifact_id)?.name ?? 'Unknown';
-    await logAction('provenance_added', 'provenance_record', null, `Provenance record for "${artName}" added by ${profile?.email}`);
-    setFormLoading(false);
-    setModalOpen(false);
-    fetch();
+    try {
+      await api.post('/curator/provenance', payload);
+      toast('Provenance record added', 'success');
+      const artName = artifacts.find((a) => a.id === form.artifact_id)?.name ?? 'Unknown';
+      await logAction('provenance_added', 'provenance_record', null, `Provenance record for "${artName}" added by ${profile?.email}`);
+      setModalOpen(false);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Failed to add provenance record', 'error');
+    } finally {
+      setFormLoading(false);
+    }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('provenance_records').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete record', 'error'); return; }
-    toast('Provenance record deleted', 'success');
-    fetch();
+    try {
+      await api.del(`/curator/provenance/${deleteTarget}`);
+      toast('Provenance record deleted', 'success');
+      fetch();
+    } catch {
+      toast('Failed to delete record', 'error');
+    }
   };
 
   return (

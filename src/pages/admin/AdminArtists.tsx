@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Pencil, Trash2, Users } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -25,10 +25,14 @@ export default function AdminArtists() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('artists').select('*').order('name');
-    if (error) setError(true);
-    else setArtists(data ?? []);
-    setLoading(false);
+    try {
+      const data = await api.get('/artists');
+      setArtists(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -41,28 +45,34 @@ export default function AdminArtists() {
     if (!form.name.trim()) { toast('Artist name is required', 'error'); return; }
     setFormLoading(true);
     const payload = { name: form.name, biography: form.biography, birth_year: form.birth_year ? parseInt(form.birth_year) : null, death_year: form.death_year ? parseInt(form.death_year) : null, nationality: form.nationality };
-    if (editTarget) {
-      const { error } = await supabase.from('artists').update(payload).eq('id', editTarget.id);
-      if (error) { toast('Failed to update artist', 'error'); setFormLoading(false); return; }
-      toast('Artist updated', 'success');
-      await logAction('artist_updated', 'artist', editTarget.id, `Artist "${form.name}" updated by ${profile?.email}`);
-    } else {
-      const { error } = await supabase.from('artists').insert(payload);
-      if (error) { toast('Failed to create artist', 'error'); setFormLoading(false); return; }
-      toast('Artist created', 'success');
-      await logAction('artist_created', 'artist', null, `Artist "${form.name}" created by ${profile?.email}`);
+    try {
+      if (editTarget) {
+        await api.put(`/artists/${editTarget.id}`, payload);
+        toast('Artist updated', 'success');
+        await logAction('artist_updated', 'artist', editTarget.id, `Artist "${form.name}" updated by ${profile?.email}`);
+      } else {
+        await api.post('/artists', payload);
+        toast('Artist created', 'success');
+        await logAction('artist_created', 'artist', null, `Artist "${form.name}" created by ${profile?.email}`);
+      }
+      setModalOpen(false);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Operation failed', 'error');
+    } finally {
+      setFormLoading(false);
     }
-    setFormLoading(false);
-    setModalOpen(false);
-    fetch();
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('artists').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete artist', 'error'); return; }
-    toast('Artist deleted', 'success');
-    fetch();
+    try {
+      await api.del(`/artists/${deleteTarget}`);
+      toast('Artist deleted', 'success');
+      fetch();
+    } catch {
+      toast('Failed to delete artist', 'error');
+    }
   };
 
   return (

@@ -3,7 +3,7 @@ import { Package, AlertTriangle, Brush, GalleryVerticalEnd, Plus, ArrowRight } f
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { DashboardCard } from '@/components/ui/DashboardCard';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { GridSkeleton } from '@/components/ui/Loading';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -14,21 +14,20 @@ export default function CuratorDashboard() {
 
   useEffect(() => {
     (async () => {
-      const [totalRes, needConsRes, exhRes, recentRes] = await Promise.all([
-        supabase.from('artifacts').select('*', { count: 'exact', head: true }),
-        supabase.from('conservation_records').select('artifact_id, next_inspection_date, artifact:artifacts(name, accession_number)').lt('next_inspection_date', new Date().toISOString()),
-        supabase.from('exhibitions').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-        supabase.from('artifacts').select('id, name, accession_number, created_at').order('created_at', { ascending: false }).limit(5),
-      ]);
-
-      setStats({
-        total: totalRes.count ?? 0,
-        needConservation: needConsRes.data?.length ?? 0,
-        exhibitions: exhRes.count ?? 0,
-        recentArtifacts: recentRes.data ?? [],
-      });
-      setAttentionArtifacts(needConsRes.data ?? []);
-      setLoading(false);
+      try {
+        const data = await api.get('/curator/dashboard-stats');
+        setStats({
+          total: data.total ?? 0,
+          needConservation: data.needConservation ?? 0,
+          exhibitions: data.exhibitions ?? 0,
+          recentArtifacts: data.recentArtifacts ?? [],
+        });
+        setAttentionArtifacts(data.attentionArtifacts ?? []);
+      } catch (err) {
+        console.error('Curator dashboard error:', err);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 

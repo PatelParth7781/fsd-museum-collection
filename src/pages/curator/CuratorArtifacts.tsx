@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Search, Eye, Pencil, Package } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { Pagination } from '@/components/ui/Pagination';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
@@ -28,23 +28,26 @@ export default function CuratorArtifacts() {
   const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
-    supabase.from('categories').select('*').order('name').then(({ data }) => setCategories(data ?? []));
+    api.get('/categories').then((data) => setCategories(data ?? []));
   }, []);
 
   const fetchArtifacts = useCallback(async () => {
     setLoading(true);
     setError(false);
-    let query = supabase
-      .from('artifacts')
-      .select('*, category:categories(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*)', { count: 'exact' })
-      .order('created_at', { ascending: false });
-    if (search) query = query.or(`name.ilike.%${search}%,accession_number.ilike.%${search}%`);
-    if (categoryFilter) query = query.eq('category_id', categoryFilter);
-    query = query.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-    const { data, error, count } = await query;
-    if (error) setError(true);
-    else { setArtifacts(data ?? []); setTotal(count ?? 0); }
-    setLoading(false);
+    try {
+      const res = await api.get('/artifacts', {
+        search,
+        category_id: categoryFilter,
+        page,
+        limit: PAGE_SIZE,
+      });
+      setArtifacts(res.artifacts ?? []);
+      setTotal(res.total ?? 0);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [search, categoryFilter, page]);
 
   useEffect(() => { fetchArtifacts(); }, [fetchArtifacts]);

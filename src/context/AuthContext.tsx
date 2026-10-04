@@ -1,7 +1,19 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import type { Profile, UserRole } from '@/types';
+
+export interface UserSession {
+  id: string;
+  email: string;
+  full_name?: string;
+  role?: UserRole;
+  [key: string]: any;
+}
+
+export interface Session {
+  user: UserSession;
+  token: string;
+}
 
 interface AuthContextValue {
   session: Session | null;
@@ -23,75 +35,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = useCallback(async (uid: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', uid)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Error fetching profile:', error.message);
-      return;
+  const fetchCurrentUser = useCallback(async (token: string) => {
+    try {
+      const data = await api.get('/auth/me');
+      const user = data.user;
+      if (user) {
+        setSession({ user, token });
+        setProfile(user as Profile);
+      } else {
+        localStorage.removeItem('token');
+        setSession(null);
+        setProfile(null);
+      }
+    } catch (err) {
+      console.error('Error fetching current user:', err);
+      localStorage.removeItem('token');
+      setSession(null);
+      setProfile(null);
     }
-    setProfile(data as Profile | null);
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) {
-        fetchProfile(session.user.id).finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        (async () => {
-          await fetchProfile(session.user.id);
-        })();
-      } else {
-        setProfile(null);
-      }
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, [fetchProfile]);
+    const token = localStorage.getItem('token');
+    if (token) {
+      fetchCurrentUser(token).finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [fetchCurrentUser]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    try {
+      const res = await api.post('/auth/login', { email, password });
+      if (res.token) {
+        localStorage.setItem('token', res.token);
+        setSession({ user: res.user, token: res.token });
+        setProfile(res.user as Profile);
+        return { error: null };
+      }
+      return { error: 'Failed to sign in' };
+    } catch (err: any) {
+      return { error: err.message || 'Login failed' };
+    }
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, fullName: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName } },
-    });
-    if (error) return { error: error.message };
-    if (data.user) {
-      await fetchProfile(data.user.id);
+    try {
+      const res = await api.post('/auth/register', {
+        email,
+        password,
+        full_name: fullName,
+      });
+      if (res.token) {
+        localStorage.setItem('token', res.token);
+        setSession({ user: res.user, token: res.token });
+        setProfile(res.user as Profile);
+      }
+      return { error: null };
+    } catch (err: any) {
+      return { error: err.message || 'Sign up failed' };
     }
-    return { error: null };
-  }, [fetchProfile]);
+  }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    localStorage.removeItem('token');
     setProfile(null);
     setSession(null);
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    if (session?.user) {
-      await fetchProfile(session.user.id);
+    const token = localStorage.getItem('token');
+    if (token) {
+      await fetchCurrentUser(token);
     }
-  }, [session, fetchProfile]);
+  }, [fetchCurrentUser]);
 
   const hasRole = useCallback((role: UserRole) => profile?.role === role, [profile]);
 

@@ -20,14 +20,33 @@ const exhibitionArtifactSchema = new mongoose.Schema(
       default: Date.now,
     },
   },
-  { _id: true }
+  {
+    toJSON: {
+      virtuals: true,
+      transform: (_, ret) => {
+        ret.id = ret._id ? ret._id.toString() : '';
+        return ret;
+      },
+    },
+    toObject: { virtuals: true },
+  }
 );
+
+exhibitionArtifactSchema.virtual('artifact', {
+  ref: 'Artifact',
+  localField: 'artifact_id',
+  foreignField: '_id',
+  justOne: true,
+});
 
 const exhibitionSchema = new mongoose.Schema(
   {
     title: {
       type: String,
-      required: [true, 'Exhibition title is required'],
+      trim: true,
+    },
+    name: {
+      type: String,
       trim: true,
     },
     description: {
@@ -36,11 +55,11 @@ const exhibitionSchema = new mongoose.Schema(
     },
     start_date: {
       type: String,
-      required: true,
+      default: null,
     },
     end_date: {
       type: String,
-      required: true,
+      default: null,
     },
     location_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -69,6 +88,8 @@ const exhibitionSchema = new mongoose.Schema(
       virtuals: true,
       transform: (_, ret) => {
         ret.id = ret._id.toString();
+        ret.name = ret.name || ret.title || '';
+        ret.title = ret.title || ret.name || '';
         delete ret.__v;
         return ret;
       },
@@ -76,6 +97,12 @@ const exhibitionSchema = new mongoose.Schema(
     toObject: { virtuals: true },
   }
 );
+
+exhibitionSchema.pre('save', function (next) {
+  if (!this.title && this.name) this.title = this.name;
+  if (!this.name && this.title) this.name = this.title;
+  next();
+});
 
 exhibitionSchema.virtual('location', {
   ref: 'Location',

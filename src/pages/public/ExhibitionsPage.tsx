@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { GalleryVerticalEnd, Calendar, MapPin } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { GridSkeleton } from '@/components/ui/Loading';
 import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
 import type { ExhibitionWithRelations } from '@/types';
@@ -14,12 +14,7 @@ export default function ExhibitionsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('exhibitions')
-          .select('*, location:locations(*), exhibition_artifacts(artifact:artifacts(*, artifact_images(*), category:categories(*)))')
-          .in('status', ['upcoming', 'active', 'ended'])
-          .order('start_date', { ascending: false });
-        if (error) throw error;
+        const data = await api.get('/exhibitions', { status: 'upcoming,active,ended' });
         setExhibitions(data ?? []);
       } catch {
         setError(true);

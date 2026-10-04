@@ -8,7 +8,13 @@ router.get('/', async (req, res) => {
   try {
     const { status } = req.query;
     const query = {};
-    if (status) query.status = status;
+    if (status) {
+      if (status.includes(',')) {
+        query.status = { $in: status.split(',') };
+      } else {
+        query.status = status;
+      }
+    }
 
     const exhibitions = await Exhibition.find(query)
       .populate('location')
@@ -16,11 +22,24 @@ router.get('/', async (req, res) => {
       .populate({
         path: 'exhibition_artifacts.artifact_id',
         model: 'Artifact',
-        populate: { path: 'artifact_images' },
+        populate: [
+          { path: 'category' },
+          { path: 'artifact_images' },
+        ],
       })
-      .sort('-start_date');
+      .sort('-createdAt');
 
-    res.json(exhibitions);
+    // Normalize exhibition_artifacts items so each item has artifact: artifact_id
+    const normalized = exhibitions.map((exh) => {
+      const obj = exh.toJSON();
+      obj.exhibition_artifacts = (obj.exhibition_artifacts || []).map((ea) => ({
+        ...ea,
+        artifact: ea.artifact_id || ea.artifact,
+      }));
+      return obj;
+    });
+
+    res.json(normalized);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -34,11 +53,24 @@ router.get('/:id', async (req, res) => {
       .populate({
         path: 'exhibition_artifacts.artifact_id',
         model: 'Artifact',
-        populate: { path: 'artifact_images' },
+        populate: [
+          { path: 'category' },
+          { path: 'artist' },
+          { path: 'historical_period' },
+          { path: 'location' },
+          { path: 'artifact_images' },
+        ],
       });
 
     if (!exhibition) return res.status(404).json({ error: 'Exhibition not found' });
-    res.json(exhibition);
+
+    const obj = exhibition.toJSON();
+    obj.exhibition_artifacts = (obj.exhibition_artifacts || []).map((ea) => ({
+      ...ea,
+      artifact: ea.artifact_id || ea.artifact,
+    }));
+
+    res.json(obj);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -77,6 +109,50 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
     const exhibition = await Exhibition.findByIdAndDelete(req.params.id);
     if (!exhibition) return res.status(404).json({ error: 'Exhibition not found' });
     res.json({ message: 'Exhibition deleted' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/exhibitions/:id/artifacts - add artifact to exhibition
+router.post('/:id/artifacts', protect, authorize('admin', 'curator'), async (req, res) => {
+  try {
+    const { artifact_id, display_order = 0, notes = '' } = req.body;
+    const exhibition = await Exhibition.findById(req.params.id);
+    if (!exhibition) return res.status(404).json({ error: 'Exhibition not found' });
+
+    const existingIndex = exhibition.exhibition_artifacts.findIndex(
+      (ea) => ea.artifact_id.toString() === artifact_id.toString()
+    );
+    if (existingIndex > -1) {
+      return res.status(400).json({ error: 'Artifact already in exhibition' });
+    }
+
+    exhibition.exhibition_artifacts.push({
+      artifact_id,
+      display_order,
+      notes,
+    });
+    await exhibition.save();
+
+    res.status(201).json({ message: 'Artifact added to exhibition' });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// DELETE /api/exhibitions/:id/artifacts/:artifactId - remove artifact from exhibition
+router.delete('/:id/artifacts/:artifactId', protect, authorize('admin', 'curator'), async (req, res) => {
+  try {
+    const exhibition = await Exhibition.findById(req.params.id);
+    if (!exhibition) return res.status(404).json({ error: 'Exhibition not found' });
+
+    exhibition.exhibition_artifacts = exhibition.exhibition_artifacts.filter(
+      (ea) => ea.artifact_id.toString() !== req.params.artifactId.toString()
+    );
+    await exhibition.save();
+
+    res.json({ message: 'Artifact removed from exhibition' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

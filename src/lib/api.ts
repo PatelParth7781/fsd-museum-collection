@@ -1,59 +1,96 @@
-/**
- * MongoDB / Express API Client
- */
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
 
-export function getAuthToken(): string | null {
-  return localStorage.getItem('auth_token');
+interface RequestOptions extends RequestInit {
+  params?: Record<string, any>;
 }
 
-export function setAuthToken(token: string | null) {
+async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  let url = `${BASE_URL}${cleanEndpoint}`;
+
+  if (options.params) {
+    const searchParams = new URLSearchParams();
+    Object.entries(options.params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        searchParams.append(key, String(value));
+      }
+    });
+    const queryString = searchParams.toString();
+    if (queryString) {
+      url += (url.includes('?') ? '&' : '?') + queryString;
+    }
+  }
+
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string>),
+  };
+
+  const token = localStorage.getItem('token');
   if (token) {
-    localStorage.setItem('auth_token', token);
-  } else {
-    localStorage.removeItem('auth_token');
-  }
-}
-
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = getAuthToken();
-  const headers = new Headers(options.headers || {});
-
-  if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json');
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const config: RequestInit = {
     ...options,
     headers,
-  });
+  };
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || `HTTP error ${response.status}`);
+  if (!isFormData && options.body && typeof options.body === 'object') {
+    config.body = JSON.stringify(options.body);
   }
 
-  return data as T;
+  const response = await fetch(url, config);
+
+  if (!response.ok) {
+    let errorMessage = `Request failed with status ${response.status}`;
+    try {
+      const data = await response.json();
+      errorMessage = data.message || data.error || errorMessage;
+    } catch {
+      // response is not json
+    }
+    throw new Error(errorMessage);
+  }
+
+  if (response.status === 204) {
+    return {} as T;
+  }
+
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    return (await response.json()) as T;
+  }
+
+  return (await response.text()) as unknown as T;
+}
+
+export async function get<T = any>(endpoint: string, params?: Record<string, any>): Promise<T> {
+  return request<T>(endpoint, { method: 'GET', params });
+}
+
+export async function post<T = any>(endpoint: string, body?: any): Promise<T> {
+  return request<T>(endpoint, { method: 'POST', body });
+}
+
+export async function put<T = any>(endpoint: string, body?: any): Promise<T> {
+  return request<T>(endpoint, { method: 'PUT', body });
+}
+
+export async function del<T = any>(endpoint: string): Promise<T> {
+  return request<T>(endpoint, { method: 'DELETE' });
 }
 
 export const api = {
-  get: <T>(url: string) => request<T>(url, { method: 'GET' }),
-  post: <T>(url: string, body?: unknown) =>
-    request<T>(url, {
-      method: 'POST',
-      body: body ? JSON.stringify(body) : undefined,
-    }),
-  put: <T>(url: string, body?: unknown) =>
-    request<T>(url, {
-      method: 'PUT',
-      body: body ? JSON.stringify(body) : undefined,
-    }),
-  delete: <T>(url: string) => request<T>(url, { method: 'DELETE' }),
+  get,
+  post,
+  put,
+  del,
+  delete: del,
 };
 
 export default api;

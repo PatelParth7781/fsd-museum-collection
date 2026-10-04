@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Pencil, Trash2, History } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -25,10 +25,14 @@ export default function AdminPeriods() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('historical_periods').select('*').order('start_year');
-    if (error) setError(true);
-    else setPeriods(data ?? []);
-    setLoading(false);
+    try {
+      const data = await api.get('/periods');
+      setPeriods(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -41,28 +45,34 @@ export default function AdminPeriods() {
     if (!form.name.trim()) { toast('Period name is required', 'error'); return; }
     setFormLoading(true);
     const payload = { name: form.name, start_year: form.start_year ? parseInt(form.start_year) : null, end_year: form.end_year ? parseInt(form.end_year) : null, description: form.description };
-    if (editTarget) {
-      const { error } = await supabase.from('historical_periods').update(payload).eq('id', editTarget.id);
-      if (error) { toast('Failed to update period', 'error'); setFormLoading(false); return; }
-      toast('Period updated', 'success');
-      await logAction('period_updated', 'historical_period', editTarget.id, `Period "${form.name}" updated by ${profile?.email}`);
-    } else {
-      const { error } = await supabase.from('historical_periods').insert(payload);
-      if (error) { toast('Failed to create period', 'error'); setFormLoading(false); return; }
-      toast('Period created', 'success');
-      await logAction('period_created', 'historical_period', null, `Period "${form.name}" created by ${profile?.email}`);
+    try {
+      if (editTarget) {
+        await api.put(`/periods/${editTarget.id}`, payload);
+        toast('Period updated', 'success');
+        await logAction('period_updated', 'historical_period', editTarget.id, `Period "${form.name}" updated by ${profile?.email}`);
+      } else {
+        await api.post('/periods', payload);
+        toast('Period created', 'success');
+        await logAction('period_created', 'historical_period', null, `Period "${form.name}" created by ${profile?.email}`);
+      }
+      setModalOpen(false);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Operation failed', 'error');
+    } finally {
+      setFormLoading(false);
     }
-    setFormLoading(false);
-    setModalOpen(false);
-    fetch();
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('historical_periods').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete period', 'error'); return; }
-    toast('Period deleted', 'success');
-    fetch();
+    try {
+      await api.del(`/periods/${deleteTarget}`);
+      toast('Period deleted', 'success');
+      fetch();
+    } catch {
+      toast('Failed to delete period', 'error');
+    }
   };
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Package, History, Users, GalleryVerticalEnd, Search } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { ArtifactCard } from '@/components/ArtifactCard';
 import { GridSkeleton } from '@/components/ui/Loading';
 import { ErrorState } from '@/components/ui/EmptyState';
@@ -24,24 +24,20 @@ export default function HomePage() {
     async function load() {
       try {
         const [catRes, exhRes, periodRes, artistRes, exhCountRes] = await Promise.all([
-          supabase.from('categories').select('*').limit(8),
-          supabase
-            .from('exhibitions')
-            .select('*, location:locations(*), exhibition_artifacts(artifact:artifacts(*, artifact_images(*)))')
-            .eq('status', 'active')
-            .limit(3),
-          supabase.from('historical_periods').select('*', { count: 'exact', head: true }),
-          supabase.from('artists').select('*', { count: 'exact', head: true }),
-          supabase.from('exhibitions').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+          api.get('/categories', { limit: 8 }),
+          api.get('/exhibitions', { status: 'active', limit: 3 }),
+          api.get('/periods'),
+          api.get('/artists'),
+          api.get('/exhibitions', { status: 'active' }),
         ]);
 
-        setCategories(catRes.data ?? []);
-        setExhibitions(exhRes.data ?? []);
+        setCategories(catRes ?? []);
+        setExhibitions(exhRes ?? []);
         setStats({
           artifacts: 0,
-          periods: periodRes.count ?? 0,
-          artists: artistRes.count ?? 0,
-          exhibitions: exhCountRes.count ?? 0,
+          periods: Array.isArray(periodRes) ? periodRes.length : 0,
+          artists: Array.isArray(artistRes) ? artistRes.length : 0,
+          exhibitions: Array.isArray(exhCountRes) ? exhCountRes.length : 0,
         });
       } catch {
         setError(true);
@@ -56,21 +52,20 @@ export default function HomePage() {
     async function loadFeatured() {
       setLoading(true);
       setError(false);
-      const { data, count, error: fetchError } = await supabase
-        .from('artifacts')
-        .select('*, category:categories(*), artist:artists(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*)', { count: 'exact' })
-        .eq('is_public', true)
-        .order('created_at', { ascending: false })
-        .range((featuredPage - 1) * FEATURED_PAGE_SIZE, featuredPage * FEATURED_PAGE_SIZE - 1);
-
-      if (fetchError) {
+      try {
+        const res = await api.get('/artifacts', {
+          is_public: true,
+          page: featuredPage,
+          limit: FEATURED_PAGE_SIZE,
+        });
+        setFeatured(res.artifacts ?? []);
+        setFeaturedTotal(res.total ?? 0);
+        setStats((prev) => ({ ...prev, artifacts: res.total ?? 0 }));
+      } catch {
         setError(true);
-      } else {
-        setFeatured(data ?? []);
-        setFeaturedTotal(count ?? 0);
-        setStats((prev) => ({ ...prev, artifacts: count ?? 0 }));
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     loadFeatured();
   }, [featuredPage]);

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Search, Eye, Pencil, Trash2, Archive, Package } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -11,7 +11,7 @@ import { TableSkeleton } from '@/components/ui/Loading';
 import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { SelectField } from '@/components/ui/FormField';
-import type { ArtifactWithRelations, Category, HistoricalPeriod } from '@/types';
+import type { ArtifactWithRelations, Category } from '@/types';
 
 const PAGE_SIZE = 10;
 
@@ -41,45 +41,52 @@ export default function AdminArtifacts() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.from('categories').select('*').order('name').then(({ data }) => setCategories(data ?? []));
+    api.get('/categories').then((data) => setCategories(data ?? []));
   }, []);
 
   const fetchArtifacts = useCallback(async () => {
     setLoading(true);
     setError(false);
-    let query = supabase
-      .from('artifacts')
-      .select('*, category:categories(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*)', { count: 'exact' })
-      .order('created_at', { ascending: false });
-
-    if (search) query = query.or(`name.ilike.%${search}%,accession_number.ilike.%${search}%`);
-    if (categoryFilter) query = query.eq('category_id', categoryFilter);
-    if (conditionFilter) query = query.eq('condition', conditionFilter);
-
-    query = query.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-    const { data, error, count } = await query;
-    if (error) setError(true);
-    else { setArtifacts(data ?? []); setTotal(count ?? 0); }
-    setLoading(false);
+    try {
+      const res = await api.get('/artifacts', {
+        search,
+        category_id: categoryFilter,
+        condition: conditionFilter,
+        page,
+        limit: PAGE_SIZE,
+      });
+      setArtifacts(res.artifacts ?? []);
+      setTotal(res.total ?? 0);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [search, categoryFilter, conditionFilter, page]);
 
   useEffect(() => { fetchArtifacts(); }, [fetchArtifacts]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('artifacts').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete artifact', 'error'); return; }
-    toast('Artifact deleted', 'success');
-    await logAction('artifact_deleted', 'artifact', deleteTarget, `Artifact deleted by ${profile?.email}`);
-    fetchArtifacts();
+    try {
+      await api.del(`/artifacts/${deleteTarget}`);
+      toast('Artifact deleted', 'success');
+      await logAction('artifact_deleted', 'artifact', deleteTarget, `Artifact deleted by ${profile?.email}`);
+      fetchArtifacts();
+    } catch {
+      toast('Failed to delete artifact', 'error');
+    }
   };
 
   const handleArchive = async (id: string) => {
-    const { error } = await supabase.from('artifacts').update({ status: 'archived' }).eq('id', id);
-    if (error) { toast('Failed to archive artifact', 'error'); return; }
-    toast('Artifact archived', 'success');
-    await logAction('artifact_archived', 'artifact', id, `Artifact archived by ${profile?.email}`);
-    fetchArtifacts();
+    try {
+      await api.put(`/artifacts/${id}`, { status: 'archived' });
+      toast('Artifact archived', 'success');
+      await logAction('artifact_archived', 'artifact', id, `Artifact archived by ${profile?.email}`);
+      fetchArtifacts();
+    } catch {
+      toast('Failed to archive artifact', 'error');
+    }
   };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);

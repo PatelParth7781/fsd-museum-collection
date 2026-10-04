@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Shield, UserCheck, UserX, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { logAction } from '@/lib/audit';
@@ -29,10 +29,14 @@ export default function AdminUsers() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-    if (error) setError(true);
-    else setUsers(data ?? []);
-    setLoading(false);
+    try {
+      const data = await api.get('/auth/users');
+      setUsers(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -49,22 +53,29 @@ export default function AdminUsers() {
       return;
     }
     setSaving(true);
-    const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', editTarget.id);
-    if (error) { toast('Failed to update role', 'error'); setSaving(false); return; }
-    toast('User role updated', 'success');
-    await logAction('user_role_changed', 'profile', editTarget.id, `Role for ${editTarget.email} changed from ${editTarget.role} to ${newRole} by ${currentUser?.email}`);
-    setSaving(false);
-    setEditTarget(null);
-    fetch();
+    try {
+      await api.put(`/auth/users/${editTarget.id}`, { role: newRole });
+      toast('User role updated', 'success');
+      await logAction('user_role_changed', 'profile', editTarget.id, `Role for ${editTarget.email} changed from ${editTarget.role} to ${newRole} by ${currentUser?.email}`);
+      setEditTarget(null);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Failed to update role', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleActive = async (user: Profile) => {
     if (user.id === currentUser?.id) { toast('You cannot deactivate your own account', 'error'); return; }
-    const { error } = await supabase.from('profiles').update({ is_active: !user.is_active }).eq('id', user.id);
-    if (error) { toast('Failed to update status', 'error'); return; }
-    toast(`User ${!user.is_active ? 'activated' : 'deactivated'}`, 'success');
-    await logAction('user_status_changed', 'profile', user.id, `User ${user.email} ${!user.is_active ? 'activated' : 'deactivated'} by ${currentUser?.email}`);
-    fetch();
+    try {
+      await api.put(`/auth/users/${user.id}`, { is_active: !user.is_active });
+      toast(`User ${!user.is_active ? 'activated' : 'deactivated'}`, 'success');
+      await logAction('user_status_changed', 'profile', user.id, `User ${user.email} ${!user.is_active ? 'activated' : 'deactivated'} by ${currentUser?.email}`);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Failed to update status', 'error');
+    }
   };
 
   const handleDelete = async () => {
@@ -74,13 +85,17 @@ export default function AdminUsers() {
       return;
     }
     setDeleting(true);
-    const { error } = await supabase.from('profiles').delete().eq('id', deleteTarget.id);
-    if (error) { toast('Failed to delete user', 'error'); setDeleting(false); return; }
-    toast('User deleted', 'success');
-    await logAction('user_deleted', 'profile', deleteTarget.id, `User ${deleteTarget.email} deleted by ${currentUser?.email}`);
-    setDeleting(false);
-    setDeleteTarget(null);
-    fetch();
+    try {
+      await api.del(`/auth/users/${deleteTarget.id}`);
+      toast('User deleted', 'success');
+      await logAction('user_deleted', 'profile', deleteTarget.id, `User ${deleteTarget.email} deleted by ${currentUser?.email}`);
+      setDeleteTarget(null);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Failed to delete user', 'error');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (

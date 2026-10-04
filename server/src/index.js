@@ -2,6 +2,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import morgan from 'morgan';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { connectDB } from './config/db.js';
 
 // Route imports
@@ -16,9 +18,14 @@ import reviewRoutes from './routes/reviews.js';
 import cartRoutes from './routes/cart.js';
 import curatorRoutes from './routes/curator.js';
 import auditRoutes from './routes/audit.js';
+import uploadRoutes from './routes/upload.js';
+import favoriteRoutes from './routes/favorites.js';
 
 // Load environment variables
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -46,6 +53,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Static files for uploads
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/artifacts', artifactRoutes);
@@ -58,6 +68,8 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/curator', curatorRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/favorites', favoriteRoutes);
 
 // 404 Route handler
 app.use((req, res) => {

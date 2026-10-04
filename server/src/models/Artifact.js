@@ -102,6 +102,8 @@ const artifactSchema = new mongoose.Schema(
       virtuals: true,
       transform: (_, ret) => {
         ret.id = ret._id.toString();
+        ret.current_location = ret.current_location || ret.location || null;
+        ret.location = ret.location || ret.current_location || null;
         delete ret.__v;
         return ret;
       },
@@ -133,6 +135,13 @@ artifactSchema.virtual('historical_period', {
 });
 
 artifactSchema.virtual('location', {
+  ref: 'Location',
+  localField: 'current_location_id',
+  foreignField: '_id',
+  justOne: true,
+});
+
+artifactSchema.virtual('current_location', {
   ref: 'Location',
   localField: 'current_location_id',
   foreignField: '_id',

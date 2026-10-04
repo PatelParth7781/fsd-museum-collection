@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Loader2, Eye, EyeOff } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 
 export default function ResetPasswordPage() {
@@ -31,23 +31,17 @@ export default function ResetPasswordPage() {
 
     setLoading(true);
 
-    const { error } = await supabase.auth.updateUser({
-      password,
-    });
-
-    if (error) {
-      toast(error.message, 'error');
+    try {
+      await api.put('/auth/password', { password });
+      toast('Password updated successfully!', 'success');
+      setTimeout(() => {
+        navigate('/login');
+      }, 1000);
+    } catch (err: any) {
+      toast(err.message || 'Failed to update password', 'error');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    toast('Password updated successfully!', 'success');
-
-    setTimeout(() => {
-      navigate('/login');
-    }, 1000);
-
-    setLoading(false);
   };
 
   return (

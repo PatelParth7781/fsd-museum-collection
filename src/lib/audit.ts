@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 
 export async function logAction(
   action: string,
@@ -7,11 +7,12 @@ export async function logAction(
   description: string = ''
 ) {
   try {
-    await supabase.rpc('log_action', {
-      p_action: action,
-      p_entity_type: entityType,
-      p_entity_id: entityId,
-      p_description: description,
+    await api.post('/audit', {
+      action,
+      entity_type: entityType,
+      entity_id: entityId,
+      details: description,
+      description,
     });
   } catch {
     // Silent fail — audit logging should not break user flows

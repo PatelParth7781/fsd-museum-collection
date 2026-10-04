@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Pencil, Trash2, Tags } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -25,10 +25,14 @@ export default function AdminCategories() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('categories').select('*').order('name');
-    if (error) setError(true);
-    else setCategories(data ?? []);
-    setLoading(false);
+    try {
+      const data = await api.get('/categories');
+      setCategories(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -40,28 +44,34 @@ export default function AdminCategories() {
     e.preventDefault();
     if (!form.name.trim()) { toast('Category name is required', 'error'); return; }
     setFormLoading(true);
-    if (editTarget) {
-      const { error } = await supabase.from('categories').update(form).eq('id', editTarget.id);
-      if (error) { toast('Failed to update category', 'error'); setFormLoading(false); return; }
-      toast('Category updated', 'success');
-      await logAction('category_updated', 'category', editTarget.id, `Category "${form.name}" updated by ${profile?.email}`);
-    } else {
-      const { error } = await supabase.from('categories').insert(form);
-      if (error) { toast('Failed to create category', 'error'); setFormLoading(false); return; }
-      toast('Category created', 'success');
-      await logAction('category_created', 'category', null, `Category "${form.name}" created by ${profile?.email}`);
+    try {
+      if (editTarget) {
+        await api.put(`/categories/${editTarget.id}`, form);
+        toast('Category updated', 'success');
+        await logAction('category_updated', 'category', editTarget.id, `Category "${form.name}" updated by ${profile?.email}`);
+      } else {
+        await api.post('/categories', form);
+        toast('Category created', 'success');
+        await logAction('category_created', 'category', null, `Category "${form.name}" created by ${profile?.email}`);
+      }
+      setModalOpen(false);
+      fetch();
+    } catch (err: any) {
+      toast(err.message || 'Operation failed', 'error');
+    } finally {
+      setFormLoading(false);
     }
-    setFormLoading(false);
-    setModalOpen(false);
-    fetch();
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('categories').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete category — it may be in use', 'error'); return; }
-    toast('Category deleted', 'success');
-    fetch();
+    try {
+      await api.del(`/categories/${deleteTarget}`);
+      toast('Category deleted', 'success');
+      fetch();
+    } catch {
+      toast('Failed to delete category — it may be in use', 'error');
+    }
   };
 
   return (

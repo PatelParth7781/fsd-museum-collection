@@ -12,7 +12,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { logAction } from '@/lib/audit';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 
 export default function LoginPage() {
   const { signIn, session, profile } = useAuth();
@@ -72,14 +72,11 @@ export default function LoginPage() {
     setResetLoading(true);
     setError('');
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-
-    if (error) {
-      setError(error.message);
-    } else {
+    try {
+      await api.post('/auth/forgot-password', { email });
       toast('Password reset link sent to your email.', 'success');
+    } catch (err: any) {
+      setError(err.message || 'Failed to send password reset email.');
     }
 
     setResetLoading(false);

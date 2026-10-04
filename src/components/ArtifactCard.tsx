@@ -5,7 +5,7 @@ import { StarRating } from '@/components/ui/StarRating';
 import { AuthPromptModal } from '@/components/ui/AuthPromptModal';
 import type { ArtifactWithRelations } from '@/types';
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useState, useEffect } from 'react';
 
@@ -19,13 +19,12 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactWithRelations }) 
   useEffect(() => {
     if (!session?.user) return;
     (async () => {
-      const { data } = await supabase
-        .from('favorites')
-        .select('id')
-        .eq('user_id', session.user.id)
-        .eq('artifact_id', artifact.id)
-        .maybeSingle();
-      setIsFavorite(!!data);
+      try {
+        const res = await api.get(`/favorites/check/${artifact.id}`);
+        setIsFavorite(!!res?.isFavorite);
+      } catch {
+        setIsFavorite(false);
+      }
     })();
   }, [session?.user, artifact.id]);
 
@@ -37,22 +36,21 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactWithRelations }) 
       return;
     }
     setFavLoading(true);
-    if (isFavorite) {
-      await supabase
-        .from('favorites')
-        .delete()
-        .eq('user_id', session.user.id)
-        .eq('artifact_id', artifact.id);
-      setIsFavorite(false);
-      toast('Removed from favorites', 'info');
-    } else {
-      await supabase
-        .from('favorites')
-        .insert({ user_id: session.user.id, artifact_id: artifact.id });
-      setIsFavorite(true);
-      toast('Added to favorites', 'success');
+    try {
+      if (isFavorite) {
+        await api.del(`/favorites/${artifact.id}`);
+        setIsFavorite(false);
+        toast('Removed from favorites', 'info');
+      } else {
+        await api.post('/favorites', { artifact_id: artifact.id });
+        setIsFavorite(true);
+        toast('Added to favorites', 'success');
+      }
+    } catch {
+      toast('Failed to update favorites', 'error');
+    } finally {
+      setFavLoading(false);
     }
-    setFavLoading(false);
   };
 
   const primaryImage = artifact.artifact_images?.find((img) => img.is_primary) ?? artifact.artifact_images?.[0];

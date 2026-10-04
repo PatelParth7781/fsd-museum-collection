@@ -7,17 +7,38 @@ const router = express.Router();
 // GET /api/audit (admin only)
 router.get('/', protect, authorize('admin'), async (req, res) => {
   try {
-    const { action, entity_type, limit = 50 } = req.query;
+    const { action, entity_type, search, page, limit = 50 } = req.query;
     const query = {};
     if (action) query.action = action;
     if (entity_type) query.entity_type = entity_type;
 
-    const logs = await AuditLog.find(query)
-      .populate('user', 'full_name email role')
-      .sort('-created_at')
-      .limit(Number(limit));
+    if (search) {
+      query.$or = [
+        { action: { $regex: search, $options: 'i' } },
+        { details: { $regex: search, $options: 'i' } },
+        { entity_type: { $regex: search, $options: 'i' } },
+      ];
+    }
 
-    res.json(logs);
+    const total = await AuditLog.countDocuments(query);
+    let logQuery = AuditLog.find(query)
+      .populate('user', 'id full_name email role')
+      .sort('-created_at');
+
+    if (page) {
+      const skip = (Number(page) - 1) * Number(limit);
+      logQuery = logQuery.skip(skip).limit(Number(limit));
+    } else {
+      logQuery = logQuery.limit(Number(limit));
+    }
+
+    const logs = await logQuery;
+
+    res.json({
+      data: logs,
+      count: total,
+      total,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -26,13 +47,14 @@ router.get('/', protect, authorize('admin'), async (req, res) => {
 // POST /api/audit (staff can log actions)
 router.post('/', protect, async (req, res) => {
   try {
-    const { action, entity_type, entity_id, details } = req.body;
+    const { action, entity_type, entity_id, details, description } = req.body;
     const log = await AuditLog.create({
       user_id: req.user._id,
       action,
       entity_type,
       entity_id,
-      details,
+      details: details || description || '',
+      description: description || details || '',
       ip_address: req.ip || req.headers['x-forwarded-for'] || '',
     });
     res.status(201).json(log);

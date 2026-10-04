@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Pencil, Trash2, GalleryVerticalEnd, X, Search } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -23,9 +23,9 @@ export default function AdminExhibitions() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState<Exhibition | null>(null);
+  const [editTarget, setEditTarget] = useState<ExhibitionWithRelations | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [manageTarget, setManageTarget] = useState<Exhibition | null>(null);
+  const [manageTarget, setManageTarget] = useState<ExhibitionWithRelations | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
   const [form, setForm] = useState({ name: '', description: '', start_date: '', end_date: '', location_id: '', status: 'upcoming', cover_image_url: '' });
   const [formLoading, setFormLoading] = useState(false);
@@ -35,19 +35,20 @@ export default function AdminExhibitions() {
   const [artifactSearch, setArtifactSearch] = useState('');
 
   useEffect(() => {
-    supabase.from('locations').select('*').order('building').then(({ data }) => setLocations(data ?? []));
+    api.get('/locations').then((data) => setLocations(data ?? []));
   }, []);
 
   const fetchExhibitions = useCallback(async () => {
     setLoading(true);
     setError(false);
-    const { data, error } = await supabase
-      .from('exhibitions')
-      .select('*, location:locations(*), exhibition_artifacts(artifact:artifacts(*, artifact_images(*), category:categories(*)))')
-      .order('created_at', { ascending: false });
-    if (error) setError(true);
-    else setExhibitions(data ?? []);
-    setLoading(false);
+    try {
+      const data = await api.get('/exhibitions');
+      setExhibitions(data ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchExhibitions(); }, [fetchExhibitions]);
@@ -58,9 +59,17 @@ export default function AdminExhibitions() {
     setModalOpen(true);
   };
 
-  const openEdit = (exh: Exhibition) => {
+  const openEdit = (exh: ExhibitionWithRelations) => {
     setEditTarget(exh);
-    setForm({ name: exh.name, description: exh.description, start_date: exh.start_date ?? '', end_date: exh.end_date ?? '', location_id: exh.location_id ?? '', status: exh.status, cover_image_url: exh.cover_image_url ?? '' });
+    setForm({
+      name: exh.name,
+      description: exh.description,
+      start_date: exh.start_date ? exh.start_date.split('T')[0] : '',
+      end_date: exh.end_date ? exh.end_date.split('T')[0] : '',
+      location_id: exh.location_id ?? (exh.location?.id || ''),
+      status: exh.status,
+      cover_image_url: exh.cover_image_url ?? '',
+    });
     setModalOpen(true);
   };
 
@@ -69,55 +78,74 @@ export default function AdminExhibitions() {
     if (!form.name.trim()) { toast('Exhibition name is required', 'error'); return; }
     setFormLoading(true);
     const payload = { ...form, start_date: form.start_date || null, end_date: form.end_date || null, location_id: form.location_id || null, cover_image_url: form.cover_image_url || null };
-    if (editTarget) {
-      const { error } = await supabase.from('exhibitions').update(payload).eq('id', editTarget.id);
-      if (error) { toast('Failed to update exhibition', 'error'); setFormLoading(false); return; }
-      toast('Exhibition updated', 'success');
-      await logAction('exhibition_updated', 'exhibition', editTarget.id, `Exhibition "${form.name}" updated by ${profile?.email}`);
-    } else {
-      const { data, error } = await supabase.from('exhibitions').insert(payload).select('id').single();
-      if (error) { toast('Failed to create exhibition', 'error'); setFormLoading(false); return; }
-      toast('Exhibition created', 'success');
-      await logAction('exhibition_created', 'exhibition', data.id, `Exhibition "${form.name}" created by ${profile?.email}`);
+    try {
+      if (editTarget) {
+        await api.put(`/exhibitions/${editTarget.id}`, payload);
+        toast('Exhibition updated', 'success');
+        await logAction('exhibition_updated', 'exhibition', editTarget.id, `Exhibition "${form.name}" updated by ${profile?.email}`);
+      } else {
+        const data = await api.post('/exhibitions', payload);
+        toast('Exhibition created', 'success');
+        await logAction('exhibition_created', 'exhibition', data.id, `Exhibition "${form.name}" created by ${profile?.email}`);
+      }
+      setModalOpen(false);
+      fetchExhibitions();
+    } catch (err: any) {
+      toast(err.message || 'Operation failed', 'error');
+    } finally {
+      setFormLoading(false);
     }
-    setFormLoading(false);
-    setModalOpen(false);
-    fetchExhibitions();
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('exhibitions').delete().eq('id', deleteTarget);
-    if (error) { toast('Failed to delete exhibition', 'error'); return; }
-    toast('Exhibition deleted', 'success');
-    fetchExhibitions();
+    try {
+      await api.del(`/exhibitions/${deleteTarget}`);
+      toast('Exhibition deleted', 'success');
+      fetchExhibitions();
+    } catch {
+      toast('Failed to delete exhibition', 'error');
+    }
   };
 
   const openManage = async (exh: Exhibition) => {
     setManageTarget(exh);
     setArtifactSearch('');
-    const [current, available] = await Promise.all([
-      supabase.from('exhibition_artifacts').select('artifact:artifacts(*, artifact_images(*), category:categories(*))').eq('exhibition_id', exh.id).order('display_order'),
-      supabase.from('artifacts').select('*, artifact_images(*), category:categories(*)').eq('is_public', true).limit(50),
-    ]);
-    setCurrentArtifacts((current.data ?? []).map((ea: any) => ea.artifact));
-    setAvailableArtifacts((available.data ?? []) as ArtifactWithRelations[]);
+    try {
+      const [exhData, available] = await Promise.all([
+        api.get(`/exhibitions/${exh.id}`),
+        api.get('/artifacts', { is_public: true, limit: 50 }),
+      ]);
+      const current = (exhData?.exhibition_artifacts ?? []).map((ea: any) => ea.artifact || ea.artifact_id).filter(Boolean);
+      setCurrentArtifacts(current);
+      setAvailableArtifacts(available?.artifacts ?? []);
+    } catch {
+      // ignore
+    }
   };
 
   const addArtifact = async (artifactId: string) => {
     if (!manageTarget) return;
-    const { error } = await supabase.from('exhibition_artifacts').insert({ exhibition_id: manageTarget.id, artifact_id: artifactId, display_order: currentArtifacts.length });
-    if (error) { toast('Failed to add artifact', 'error'); return; }
-    toast('Artifact added to exhibition', 'success');
-    openManage(manageTarget);
+    try {
+      await api.post(`/exhibitions/${manageTarget.id}/artifacts`, { artifact_id: artifactId });
+      toast('Artifact added to exhibition', 'success');
+      openManage(manageTarget);
+      fetchExhibitions();
+    } catch (err: any) {
+      toast(err.message || 'Failed to add artifact', 'error');
+    }
   };
 
   const removeArtifact = async (artifactId: string) => {
     if (!manageTarget) return;
-    const { error } = await supabase.from('exhibition_artifacts').delete().eq('exhibition_id', manageTarget.id).eq('artifact_id', artifactId);
-    if (error) { toast('Failed to remove artifact', 'error'); return; }
-    toast('Artifact removed from exhibition', 'info');
-    openManage(manageTarget);
+    try {
+      await api.del(`/exhibitions/${manageTarget.id}/artifacts/${artifactId}`);
+      toast('Artifact removed from exhibition', 'info');
+      openManage(manageTarget);
+      fetchExhibitions();
+    } catch (err: any) {
+      toast(err.message || 'Failed to remove artifact', 'error');
+    }
   };
 
   const filtered = exhibitions.filter((e) => e.name.toLowerCase().includes(search.toLowerCase()));

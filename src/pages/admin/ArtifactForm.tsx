@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Save, Loader2, AlertCircle } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { logAction } from '@/lib/audit';
@@ -40,33 +40,37 @@ export default function ArtifactForm() {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('categories').select('*').order('name'),
-      supabase.from('artists').select('*').order('name'),
-      supabase.from('historical_periods').select('*').order('start_year'),
-      supabase.from('locations').select('*').order('building'),
+      api.get('/categories'),
+      api.get('/artists'),
+      api.get('/periods'),
+      api.get('/locations'),
     ]).then(([c, a, p, l]) => {
-      setOptions({ categories: c.data ?? [], artists: a.data ?? [], periods: p.data ?? [], locations: l.data ?? [] });
+      setOptions({ categories: c ?? [], artists: a ?? [], periods: p ?? [], locations: l ?? [] });
     });
   }, []);
 
   useEffect(() => {
     if (!id) return;
     (async () => {
-      const { data } = await supabase.from('artifacts').select('*').eq('id', id).maybeSingle();
-      if (data) {
-        setForm({
-          ...initialForm,
-          ...data,
-          acquisition_date: data.acquisition_date ?? '',
-          category_id: data.category_id ?? '',
-          artist_id: data.artist_id ?? '',
-          historical_period_id: data.historical_period_id ?? '',
-          current_location_id: data.current_location_id ?? '',
-        });
+      try {
+        const data = await api.get(`/artifacts/${id}`);
+        if (data) {
+          setForm({
+            ...initialForm,
+            ...data,
+            acquisition_date: data.acquisition_date ? data.acquisition_date.split('T')[0] : '',
+            category_id: data.category_id ?? (data.category?.id || ''),
+            artist_id: data.artist_id ?? (data.artist?.id || ''),
+            historical_period_id: data.historical_period_id ?? (data.historical_period?.id || ''),
+            current_location_id: data.current_location_id ?? (data.current_location?.id || data.location?.id || ''),
+          });
+          setImages(data.artifact_images ?? []);
+        }
+      } catch (err) {
+        console.error('Error fetching artifact:', err);
+      } finally {
+        setPageLoading(false);
       }
-      const { data: imgs } = await supabase.from('artifact_images').select('*').eq('artifact_id', id).order('is_primary', { ascending: false });
-      setImages(imgs ?? []);
-      setPageLoading(false);
     })();
   }, [id]);
 
@@ -80,10 +84,15 @@ export default function ArtifactForm() {
   };
 
   const checkDuplicateAccession = async (accNum: string): Promise<boolean> => {
-    let query = supabase.from('artifacts').select('id').eq('accession_number', accNum);
-    if (id) query = query.neq('id', id);
-    const { data } = await query.maybeSingle();
-    return !!data;
+    try {
+      const res = await api.get('/artifacts/check-accession', {
+        accession_number: accNum,
+        exclude_id: id,
+      });
+      return !!res?.exists;
+    } catch {
+      return false;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -108,27 +117,34 @@ export default function ArtifactForm() {
       created_by: isEdit ? undefined : profile?.id,
     };
 
-    if (isEdit) {
-      const { error } = await supabase.from('artifacts').update(payload).eq('id', id);
-      if (error) { toast('Failed to update artifact', 'error'); setLoading(false); return; }
-      toast('Artifact updated successfully', 'success');
-      await logAction('artifact_updated', 'artifact', id, `Artifact "${form.name}" updated by ${profile?.email}`);
-    } else {
-      const { data, error } = await supabase.from('artifacts').insert(payload).select('id').single();
-      if (error) { toast('Failed to create artifact', 'error'); setLoading(false); return; }
-      toast('Artifact created successfully', 'success');
-      await logAction('artifact_created', 'artifact', data.id, `Artifact "${form.name}" created by ${profile?.email}`);
-      navigate(`/admin/artifacts/${data.id}/edit`);
-      return;
+    try {
+      if (isEdit) {
+        await api.put(`/artifacts/${id}`, payload);
+        toast('Artifact updated successfully', 'success');
+        await logAction('artifact_updated', 'artifact', id, `Artifact "${form.name}" updated by ${profile?.email}`);
+      } else {
+        const data = await api.post('/artifacts', payload);
+        toast('Artifact created successfully', 'success');
+        await logAction('artifact_created', 'artifact', data.id, `Artifact "${form.name}" created by ${profile?.email}`);
+        navigate(`/admin/artifacts/${data.id}/edit`);
+        return;
+      }
+      navigate('/admin/artifacts');
+    } catch (err: any) {
+      toast(err.message || (isEdit ? 'Failed to update artifact' : 'Failed to create artifact'), 'error');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    navigate('/admin/artifacts');
   };
 
   const fetchImages = async () => {
     if (!id) return;
-    const { data } = await supabase.from('artifact_images').select('*').eq('artifact_id', id).order('is_primary', { ascending: false });
-    setImages(data ?? []);
+    try {
+      const data = await api.get(`/artifacts/${id}`);
+      setImages(data?.artifact_images ?? []);
+    } catch {
+      // ignore
+    }
   };
 
   if (pageLoading) return <DashboardLayout title={isEdit ? 'Edit Artifact' : 'Add Artifact'}><div className="card p-8 text-center text-stone-500">Loading...</div></DashboardLayout>;

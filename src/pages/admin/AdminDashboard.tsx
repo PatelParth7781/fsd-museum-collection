@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { DashboardCard, ChartCard } from '@/components/ui/DashboardCard';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { GridSkeleton } from '@/components/ui/Loading';
 import { ErrorState } from '@/components/ui/EmptyState';
 
@@ -77,167 +77,22 @@ export default function AdminDashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const now = new Date();
-        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-        const [
-          artifacts, publicArt, exhibitions, visitors, curators,
-          allProfiles, newProfiles, recentLogins,
-          reviews, pendingReviews, allRatings, reviewsThisMonthData,
-          comments, pendingComments,
-          categoryLikes, favorites, activeCarts, cartItems,
-        ] = await Promise.all([
-          supabase.from('artifacts').select('*', { count: 'exact', head: true }),
-          supabase.from('artifacts').select('*', { count: 'exact', head: true }).eq('is_public', true),
-          supabase.from('exhibitions').select('*', { count: 'exact', head: true }),
-          supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'visitor'),
-          supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'curator'),
-          supabase.from('profiles').select('*', { count: 'exact', head: true }),
-          supabase.from('profiles').select('created_at').gte('created_at', monthAgo.toISOString()),
-          supabase.from('audit_logs').select('id', { count: 'exact', head: true }).eq('action', 'login').gte('created_at', weekAgo.toISOString()),
-          supabase.from('reviews').select('*', { count: 'exact', head: true }),
-          supabase.from('reviews').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-          supabase.from('reviews').select('rating').eq('status', 'published'),
-          supabase.from('reviews').select('id', { count: 'exact', head: true }).gte('created_at', monthAgo.toISOString()),
-          supabase.from('comments').select('*', { count: 'exact', head: true }),
-          supabase.from('comments').select('*', { count: 'exact', head: true }).eq('is_approved', false),
-          supabase.from('category_likes').select('*', { count: 'exact', head: true }),
-          supabase.from('favorites').select('*', { count: 'exact', head: true }),
-          supabase.from('carts').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-          supabase.from('cart_items').select('*', { count: 'exact', head: true }),
-        ]);
-
-        setStats({
-          total: artifacts.count ?? 0,
-          public: publicArt.count ?? 0,
-          onExhibition: 0,
-          needConservation: 0,
-          exhibitions: exhibitions.count ?? 0,
-          visitors: visitors.count ?? 0,
-          curators: curators.count ?? 0,
-          totalUsers: allProfiles.count ?? 0,
-          newUsersThisMonth: (newProfiles.data ?? []).length,
-          loginsThisWeek: recentLogins.count ?? 0,
-          totalReviews: reviews.count ?? 0,
-          pendingReviews: pendingReviews.count ?? 0,
-          averageRating: (allRatings.data ?? []).length > 0
-            ? Number(((allRatings.data as any[]).reduce((sum, r) => sum + r.rating, 0) / (allRatings.data as any[]).length).toFixed(2))
-            : 0,
-          reviewsThisMonth: reviewsThisMonthData.count ?? 0,
-          totalComments: comments.count ?? 0,
-          pendingComments: pendingComments.count ?? 0,
-          totalCategoryLikes: categoryLikes.count ?? 0,
-          totalFavorites: favorites.count ?? 0,
-          activeCarts: activeCarts.count ?? 0,
-          totalCartItems: cartItems.count ?? 0,
-        });
-
-        const [exhArt, needCons, catData, perData, condData, acqData, exhData,
-          recentArt, recentAct, recentRev, recentComm, allProfilesData, allCatLikes, allReviews] = await Promise.all([
-          supabase.from('exhibition_artifacts').select('artifact_id'),
-          supabase.from('conservation_records').select('artifact_id').lt('next_inspection_date', now.toISOString()),
-          supabase.from('artifacts').select('category:categories(name)').not('category_id', 'is', null),
-          supabase.from('artifacts').select('historical_period:historical_periods(name)').not('historical_period_id', 'is', null),
-          supabase.from('artifacts').select('condition'),
-          supabase.from('acquisitions').select('acquisition_date'),
-          supabase.from('exhibitions').select('status'),
-          supabase.from('artifacts').select('id, name, accession_number, created_at').order('created_at', { ascending: false }).limit(5),
-          supabase.from('audit_logs').select('*, user:profiles(full_name)').order('created_at', { ascending: false }).limit(8),
-          supabase.from('reviews').select('*, user:profiles(full_name, email), artifact:artifacts(name, accession_number)').order('created_at', { ascending: false }).limit(5),
-          supabase.from('comments').select('*, user:profiles(full_name, email), artifact:artifacts(name, accession_number)').order('created_at', { ascending: false }).limit(5),
-          supabase.from('profiles').select('created_at, role').order('created_at', { ascending: true }),
-          supabase.from('category_likes').select('category:categories(name)'),
-          supabase.from('reviews').select('rating').eq('status', 'published'),
-        ]);
-
-        const [mostReviewedRes, highestRatedRes] = await Promise.all([
-          supabase.from('reviews').select('artifact:artifacts(name)').eq('status', 'published'),
-          supabase.from('reviews').select('artifact:artifacts(name), rating').eq('status', 'published'),
-        ]);
-
-        const reviewedMap = new Map<string, number>();
-        (mostReviewedRes.data ?? []).forEach((r: any) => {
-          const n = r.artifact?.name;
-          if (n) reviewedMap.set(n, (reviewedMap.get(n) ?? 0) + 1);
-        });
-        setMostReviewed(Array.from(reviewedMap, ([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 10));
-
-        const ratedMap = new Map<string, { total: number; count: number }>();
-        (highestRatedRes.data ?? []).forEach((r: any) => {
-          const n = r.artifact?.name;
-          if (n) {
-            const cur = ratedMap.get(n) ?? { total: 0, count: 0 };
-            ratedMap.set(n, { total: cur.total + r.rating, count: cur.count + 1 });
-          }
-        });
-        setHighestRated(
-          Array.from(ratedMap, ([name, v]) => ({ name, rating: Number((v.total / v.count).toFixed(1)) }))
-            .filter((r) => r.rating > 0)
-            .sort((a, b) => b.rating - a.rating)
-            .slice(0, 10),
-        );
-
-        setStats((prev) => ({
-          ...prev,
-          onExhibition: new Set((exhArt.data ?? []).map((r: any) => r.artifact_id)).size,
-          needConservation: new Set((needCons.data ?? []).map((r: any) => r.artifact_id)).size,
-        }));
-
-        const catMap = new Map<string, number>();
-        (catData.data ?? []).forEach((r: any) => { const n = r.category?.name; if (n) catMap.set(n, (catMap.get(n) ?? 0) + 1); });
-        setByCategory(Array.from(catMap, ([name, count]) => ({ name, count })));
-
-        const perMap = new Map<string, number>();
-        (perData.data ?? []).forEach((r: any) => { const n = r.historical_period?.name; if (n) perMap.set(n, (perMap.get(n) ?? 0) + 1); });
-        setByPeriod(Array.from(perMap, ([name, count]) => ({ name, count })));
-
-        const condMap = new Map<string, number>();
-        (condData.data ?? []).forEach((r: any) => condMap.set(r.condition, (condMap.get(r.condition) ?? 0) + 1));
-        setByCondition(Array.from(condMap, ([name, count]) => ({ name, count })));
-
-        const yearMap = new Map<string, number>();
-        (acqData.data ?? []).forEach((r: any) => {
-          if (r.acquisition_date) {
-            const y = new Date(r.acquisition_date).getFullYear().toString();
-            yearMap.set(y, (yearMap.get(y) ?? 0) + 1);
-          }
-        });
-        setAcquisitionTrends(Array.from(yearMap, ([year, count]) => ({ year, count })).sort((a, b) => a.year.localeCompare(b.year)));
-
-        const exhMap = new Map<string, number>();
-        (exhData.data ?? []).forEach((r: any) => exhMap.set(r.status, (exhMap.get(r.status) ?? 0) + 1));
-        setExhibitionStats(Array.from(exhMap, ([name, value]) => ({ name, value })));
-
-        setRecentArtifacts(recentArt.data ?? []);
-        setRecentActivity(recentAct.data ?? []);
-        setRecentReviews(recentRev.data ?? []);
-        setRecentComments(recentComm.data ?? []);
-
-        const profilesData = (allProfilesData.data ?? []) as { created_at: string; role: string }[];
-        const months: { date: string; users: number }[] = [];
-        for (let i = 5; i >= 0; i--) {
-          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          const label = d.toLocaleDateString('en', { month: 'short' });
-          const cumulative = profilesData.filter((p) => new Date(p.created_at) <= new Date(d.getFullYear(), d.getMonth() + 1, 0)).length;
-          months.push({ date: label, users: cumulative });
-        }
-        setUserGrowth(months);
-
-        const likeMap = new Map<string, number>();
-        (allCatLikes.data ?? []).forEach((r: any) => { const n = r.category?.name; if (n) likeMap.set(n, (likeMap.get(n) ?? 0) + 1); });
-        setCategoryLikesData(Array.from(likeMap, ([name, likes]) => ({ name, likes })).sort((a, b) => b.likes - a.likes));
-
-        const ratingMap = new Map<string, number>();
-        ['5', '4', '3', '2', '1'].forEach((r) => ratingMap.set(r, 0));
-        (allReviews.data ?? []).forEach((r: any) => ratingMap.set(String(r.rating), (ratingMap.get(String(r.rating)) ?? 0) + 1));
-        setRatingDistribution([
-          { name: '5 Star', count: ratingMap.get('5') ?? 0 },
-          { name: '4 Star', count: ratingMap.get('4') ?? 0 },
-          { name: '3 Star', count: ratingMap.get('3') ?? 0 },
-          { name: '2 Star', count: ratingMap.get('2') ?? 0 },
-          { name: '1 Star', count: ratingMap.get('1') ?? 0 },
-        ]);
+        const data = await api.get('/curator/admin-dashboard-stats');
+        if (data.stats) setStats(data.stats);
+        if (data.byCategory) setByCategory(data.byCategory);
+        if (data.byPeriod) setByPeriod(data.byPeriod);
+        if (data.byCondition) setByCondition(data.byCondition);
+        if (data.acquisitionTrends) setAcquisitionTrends(data.acquisitionTrends);
+        if (data.exhibitionStats) setExhibitionStats(data.exhibitionStats);
+        if (data.recentArtifacts) setRecentArtifacts(data.recentArtifacts);
+        if (data.recentActivity) setRecentActivity(data.recentActivity);
+        if (data.recentReviews) setRecentReviews(data.recentReviews);
+        if (data.recentComments) setRecentComments(data.recentComments);
+        if (data.userGrowth) setUserGrowth(data.userGrowth);
+        if (data.categoryLikesData) setCategoryLikesData(data.categoryLikesData);
+        if (data.ratingDistribution) setRatingDistribution(data.ratingDistribution);
+        if (data.mostReviewed) setMostReviewed(data.mostReviewed);
+        if (data.highestRated) setHighestRated(data.highestRated);
       } catch (err) {
         console.error('Dashboard error:', err);
         setError(true);

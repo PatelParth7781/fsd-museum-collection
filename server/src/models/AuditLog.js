@@ -26,6 +26,10 @@ const auditLogSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    description: {
+      type: String,
+      default: '',
+    },
     ip_address: {
       type: String,
       default: '',
@@ -42,6 +46,8 @@ const auditLogSchema = new mongoose.Schema(
       virtuals: true,
       transform: (_, ret) => {
         ret.id = ret._id.toString();
+        ret.description = ret.description || ret.details || '';
+        ret.details = ret.details || ret.description || '';
         delete ret.__v;
         return ret;
       },
@@ -49,6 +55,12 @@ const auditLogSchema = new mongoose.Schema(
     toObject: { virtuals: true },
   }
 );
+
+auditLogSchema.pre('save', function (next) {
+  if (this.description && !this.details) this.details = this.description;
+  if (this.details && !this.description) this.description = this.details;
+  next();
+});
 
 auditLogSchema.virtual('user', {
   ref: 'User',

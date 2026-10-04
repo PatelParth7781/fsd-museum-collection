@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Search, X, Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import type { Artifact } from '@/types';
 
 export function SearchBar({ className = '', size = 'md' }: { className?: string; size?: 'sm' | 'md' }) {
@@ -32,14 +32,18 @@ export function SearchBar({ className = '', size = 'md' }: { className?: string;
     }
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
-      const { data } = await supabase
-        .from('artifacts')
-        .select('id, name, accession_number, origin')
-        .or(`name.ilike.%${query.trim()}%,accession_number.ilike.%${query.trim()}%`)
-        .eq('is_public', true)
-        .limit(6);
-      setSuggestions((data ?? []) as Artifact[]);
-      setLoading(false);
+      try {
+        const res = await api.get('/artifacts', {
+          search: query.trim(),
+          is_public: true,
+          limit: 6,
+        });
+        setSuggestions((res.artifacts ?? []) as Artifact[]);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setLoading(false);
+      }
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Heart, MapPin, Calendar, User, Package, Ruler, Weight, ArrowLeft, Tag, Layers, MessageSquare, Send, Trash2, Loader2, Pencil, ChevronDown } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { FullPageSpinner } from '@/components/ui/Loading';
@@ -41,43 +41,50 @@ export default function ArtifactDetailPage() {
   const [authAction, setAuthAction] = useState('interact with the collection');
 
   const fetchReviews = useCallback(async (artifactId: string, page = 1, sort = reviewSort) => {
-    const from = (page - 1) * 8;
-    const to = from + 7;
-    let query = supabase
-      .from('reviews')
-      .select('*, user:profiles(id, full_name, email), artifact:artifacts(id, name, accession_number)', { count: 'exact' })
-      .eq('artifact_id', artifactId)
-      .eq('status', 'published');
-    if (sort === 'highest') query = query.order('rating', { ascending: false }).order('created_at', { ascending: false });
-    else if (sort === 'lowest') query = query.order('rating', { ascending: true }).order('created_at', { ascending: false });
-    else query = query.order('created_at', { ascending: false });
-    const { data, count } = await query.range(from, to);
-    setReviews((previous) => (page === 1 ? (data ?? []) : [...previous, ...(data ?? [])]) as ReviewWithRelations[]);
-    setReviewTotal(count ?? 0);
-    if (page === 1) {
-      const { data: stats } = await supabase
-        .rpc('get_artifact_review_summary', { artifact_uuid: artifactId });
-      setReviewStats(stats?.[0] ?? null);
+    try {
+      const res = await api.get<{
+        reviews: ReviewWithRelations[];
+        data: ReviewWithRelations[];
+        total: number;
+        summary: {
+          average_rating: number;
+          review_count: number;
+          five_star: number;
+          four_star: number;
+          three_star: number;
+          two_star: number;
+          one_star: number;
+        };
+      }>(`/reviews/artifact/${artifactId}`, { page, limit: 8, sort });
+
+      const reviewList = res?.reviews ?? res?.data ?? [];
+      setReviews((previous) => (page === 1 ? reviewList : [...previous, ...reviewList]));
+      setReviewTotal(res?.total ?? 0);
+      if (page === 1 && res?.summary) {
+        setReviewStats(res.summary);
+      }
+    } catch {
+      // ignore
     }
+
     if (session?.user) {
-      const { data: mine } = await supabase
-        .from('reviews')
-        .select('*, user:profiles(id, full_name, email), artifact:artifacts(id, name, accession_number)')
-        .eq('artifact_id', artifactId)
-        .eq('user_id', session.user.id)
-        .maybeSingle();
-      setUserReview(mine as ReviewWithRelations | null);
-      if (mine) setReviewForm({ rating: mine.rating, title: mine.title, body: mine.body });
+      try {
+        const mine = await api.get<ReviewWithRelations | null>(`/reviews/artifact/${artifactId}/mine`);
+        setUserReview(mine ?? null);
+        if (mine) setReviewForm({ rating: mine.rating, title: mine.title, body: mine.body || (mine as any).comment || '' });
+      } catch {
+        // ignore
+      }
     }
   }, [session?.user, reviewSort]);
 
   const fetchComments = useCallback(async (artifactId: string) => {
-    const { data } = await supabase
-      .from('comments')
-      .select('*, user:profiles(id, full_name, email), artifact:artifacts(id, name, accession_number)')
-      .eq('artifact_id', artifactId)
-      .order('created_at', { ascending: false });
-    setComments((data ?? []) as CommentWithRelations[]);
+    try {
+      const data = await api.get<CommentWithRelations[]>(`/reviews/artifact/${artifactId}/comments`);
+      setComments(data ?? []);
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -87,53 +94,41 @@ export default function ArtifactDetailPage() {
 
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('artifacts')
-          .select('*, category:categories(*), artist:artists(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*)')
-          .eq('id', id)
-          .maybeSingle();
-
-        if (error || !data) {
+        const data = await api.get<ArtifactWithRelations>(`/artifacts/${id}`);
+        if (!data) {
           setError(true);
           setLoading(false);
           return;
         }
 
-        setArtifact(data as ArtifactWithRelations);
+        setArtifact(data);
 
-        const [provRes, consRes, exhRes, acqRes, relRes] = await Promise.all([
-          supabase.from('provenance_records').select('*').eq('artifact_id', id).order('start_date', { ascending: true }),
-          supabase.from('conservation_records').select('*').eq('artifact_id', id).order('assessment_date', { ascending: false }),
-          supabase
-            .from('exhibition_artifacts')
-            .select('exhibition:exhibitions(*)')
-            .eq('artifact_id', id),
-          supabase.from('acquisitions').select('*').eq('artifact_id', id).maybeSingle(),
+        const [provRes, consRes, exhRes, relRes] = await Promise.all([
+          api.get<ProvenanceRecord[]>(`/artifacts/${id}/provenance`).catch(() => []),
+          api.get<ConservationRecord[]>(`/artifacts/${id}/conservation`).catch(() => []),
+          api.get<Exhibition[]>(`/artifacts/${id}/exhibitions`).catch(() => []),
           data.category_id
-            ? supabase
-                .from('artifacts')
-                .select('*, category:categories(*), artist:artists(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*)')
-                .eq('category_id', data.category_id)
-                .neq('id', id)
-                .eq('is_public', true)
-                .limit(4)
-            : Promise.resolve({ data: [] }),
+            ? api.get<{ data: ArtifactWithRelations[] }>('/artifacts', {
+                category: data.category_id,
+                is_public: true,
+                limit: 5,
+              }).then((res) => (res?.data ?? []).filter((a) => a.id !== id).slice(0, 4)).catch(() => [])
+            : Promise.resolve([]),
         ]);
 
-        setProvenance(provRes.data ?? []);
-        setConservation(consRes.data ?? []);
-        setExhibitions((exhRes.data ?? []).map((e: any) => e.exhibition));
-        setAcquisition(acqRes.data as Acquisition | null);
-        setRelated((relRes.data as ArtifactWithRelations[]) ?? []);
+        setProvenance(provRes ?? []);
+        setConservation(consRes ?? []);
+        setExhibitions(exhRes ?? []);
+        setAcquisition(null);
+        setRelated(relRes ?? []);
 
         if (session?.user) {
-          const favRes = await supabase
-            .from('favorites')
-            .select('id')
-            .eq('user_id', session.user.id)
-            .eq('artifact_id', id)
-            .maybeSingle();
-          setIsFavorite(!!favRes.data);
+          try {
+            const favRes = await api.get<{ isFavorite: boolean }>(`/favorites/check/${id}`);
+            setIsFavorite(!!favRes?.isFavorite);
+          } catch {
+            setIsFavorite(false);
+          }
         }
 
         fetchReviews(id);
@@ -153,14 +148,18 @@ export default function ArtifactDetailPage() {
       return;
     }
     if (!id) return;
-    if (isFavorite) {
-      await supabase.from('favorites').delete().eq('user_id', session.user.id).eq('artifact_id', id);
-      setIsFavorite(false);
-      toast('Removed from favorites', 'info');
-    } else {
-      await supabase.from('favorites').insert({ user_id: session.user.id, artifact_id: id });
-      setIsFavorite(true);
-      toast('Added to favorites', 'success');
+    try {
+      if (isFavorite) {
+        await api.del(`/favorites/${id}`);
+        setIsFavorite(false);
+        toast('Removed from favorites', 'info');
+      } else {
+        await api.post('/favorites', { artifact_id: id });
+        setIsFavorite(true);
+        toast('Added to favorites', 'success');
+      }
+    } catch (err: any) {
+      toast(err.message || 'Failed to update favorite', 'error');
     }
   };
 
@@ -176,36 +175,46 @@ export default function ArtifactDetailPage() {
     if (reviewForm.body.trim().length > 5000) { toast('Your review is too long. Please keep it under 5,000 characters.', 'error'); return; }
     if (!id) return;
     setReviewSubmitting(true);
-    if (userReview) {
-      const { error } = await supabase.from('reviews').update({
-        rating: reviewForm.rating, title: reviewForm.title, body: reviewForm.body,
-      }).eq('id', userReview.id);
-      if (error) { toast('Failed to update review', 'error'); setReviewSubmitting(false); return; }
-      toast('Your review has been updated successfully.', 'success');
-    } else {
-      const { error } = await supabase.from('reviews').insert({
-        user_id: session.user.id, artifact_id: id,
-        rating: reviewForm.rating, title: reviewForm.title, body: reviewForm.body,
-      });
-      if (error) { toast('Failed to submit review', 'error'); setReviewSubmitting(false); return; }
-      toast('Your review has been submitted successfully.', 'success');
+    try {
+      if (userReview) {
+        await api.put(`/reviews/${userReview.id}`, {
+          rating: reviewForm.rating,
+          title: reviewForm.title,
+          body: reviewForm.body,
+        });
+        toast('Your review has been updated successfully.', 'success');
+      } else {
+        await api.post('/reviews', {
+          artifact_id: id,
+          rating: reviewForm.rating,
+          title: reviewForm.title,
+          body: reviewForm.body,
+        });
+        toast('Your review has been submitted successfully.', 'success');
+      }
+      setReviewForm({ rating: 5, title: '', body: '' });
+      setUserReview(null);
+      setReviewPage(1);
+      fetchReviews(id, 1, reviewSort);
+    } catch (err: any) {
+      toast(err.message || 'Failed to submit review', 'error');
+    } finally {
+      setReviewSubmitting(false);
     }
-    setReviewForm({ rating: 5, title: '', body: '' });
-    setUserReview(null);
-    setReviewSubmitting(false);
-    setReviewPage(1);
-    fetchReviews(id, 1, reviewSort);
   };
 
   const deleteReview = async (reviewId: string) => {
-    const { error } = await supabase.from('reviews').delete().eq('id', reviewId);
-    if (error) { toast('Failed to delete review', 'error'); return; }
-    toast('Review deleted', 'info');
-    setReviewForm({ rating: 5, title: '', body: '' });
-    setUserReview(null);
-    if (id) {
-      setReviewPage(1);
-      fetchReviews(id, 1, reviewSort);
+    try {
+      await api.del(`/reviews/${reviewId}`);
+      toast('Review deleted', 'info');
+      setReviewForm({ rating: 5, title: '', body: '' });
+      setUserReview(null);
+      if (id) {
+        setReviewPage(1);
+        fetchReviews(id, 1, reviewSort);
+      }
+    } catch (err: any) {
+      toast(err.message || 'Failed to delete review', 'error');
     }
   };
 
@@ -215,21 +224,26 @@ export default function ArtifactDetailPage() {
     if (!commentForm.trim()) { toast('Please write a comment', 'error'); return; }
     if (!id) return;
     setCommentSubmitting(true);
-    const { error } = await supabase.from('comments').insert({
-      user_id: session.user.id, artifact_id: id, body: commentForm.trim(),
-    });
-    if (error) { toast('Failed to post comment', 'error'); setCommentSubmitting(false); return; }
-    toast('Comment posted! It will appear once approved by an admin.', 'success');
-    setCommentForm('');
-    setCommentSubmitting(false);
-    fetchComments(id);
+    try {
+      await api.post(`/reviews/artifact/${id}/comments`, { body: commentForm.trim() });
+      toast('Comment posted! It will appear once approved by an admin.', 'success');
+      setCommentForm('');
+      fetchComments(id);
+    } catch (err: any) {
+      toast(err.message || 'Failed to post comment', 'error');
+    } finally {
+      setCommentSubmitting(false);
+    }
   };
 
   const deleteComment = async (commentId: string) => {
-    const { error } = await supabase.from('comments').delete().eq('id', commentId);
-    if (error) { toast('Failed to delete comment', 'error'); return; }
-    toast('Comment deleted', 'info');
-    if (id) fetchComments(id);
+    try {
+      await api.del(`/reviews/comments/${commentId}`);
+      toast('Comment deleted', 'info');
+      if (id) fetchComments(id);
+    } catch (err: any) {
+      toast(err.message || 'Failed to delete comment', 'error');
+    }
   };
 
   const ratingCounts = reviewStats

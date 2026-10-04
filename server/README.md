@@ -4,7 +4,7 @@ Express.js and MongoDB backend for the Museum Collection Management System (MCMS
 
 ## 🚀 Overview
 
-This backend replaces the direct Supabase BaaS connection with a full MERN-stack architecture using **Node.js, Express, and MongoDB (via Mongoose)**.
+This backend provides a full MERN-stack architecture using **Node.js, Express, and MongoDB (via Mongoose)**.
 
 ### Tech Stack
 - **Runtime:** Node.js (ES Modules)

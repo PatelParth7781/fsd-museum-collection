@@ -4,7 +4,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/Loading';
 import { StarRating } from '@/components/ui/StarRating';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import type { ReviewStatus, ReviewWithRelations } from '@/types';
 
@@ -18,13 +18,17 @@ export default function AdminReviews() {
 
   const fetchReviews = useCallback(async () => {
     setLoading(true);
-    let query = supabase.from('reviews').select('*, user:profiles(id, full_name, email), artifact:artifacts(id, name, accession_number)').order('created_at', { ascending: false });
-    if (status) query = query.eq('status', status);
-    if (rating) query = query.eq('rating', Number(rating));
-    const { data, error } = await query;
-    if (error) toast('Could not load reviews.', 'error');
-    else setReviews((data ?? []) as ReviewWithRelations[]);
-    setLoading(false);
+    try {
+      const data = await api.get('/reviews/admin', {
+        status: status || undefined,
+        rating: rating ? Number(rating) : undefined,
+      });
+      setReviews((data ?? []) as ReviewWithRelations[]);
+    } catch {
+      toast('Could not load reviews.', 'error');
+    } finally {
+      setLoading(false);
+    }
   }, [rating, status, toast]);
 
   useEffect(() => { fetchReviews(); }, [fetchReviews]);
@@ -35,18 +39,24 @@ export default function AdminReviews() {
   });
 
   const setReviewStatus = async (id: string, nextStatus: ReviewStatus) => {
-    const { error } = await supabase.from('reviews').update({ status: nextStatus }).eq('id', id);
-    if (error) { toast('Could not update review status.', 'error'); return; }
-    toast(nextStatus === 'published' ? 'Review published.' : 'Review hidden.', 'success');
-    fetchReviews();
+    try {
+      await api.put(`/reviews/${id}/moderate`, { status: nextStatus });
+      toast(nextStatus === 'published' ? 'Review published.' : 'Review hidden.', 'success');
+      fetchReviews();
+    } catch {
+      toast('Could not update review status.', 'error');
+    }
   };
 
   const deleteReview = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this review?')) return;
-    const { error } = await supabase.from('reviews').delete().eq('id', id);
-    if (error) { toast('Could not delete review.', 'error'); return; }
-    toast('Review deleted.', 'info');
-    setReviews((current) => current.filter((review) => review.id !== id));
+    try {
+      await api.del(`/reviews/${id}`);
+      toast('Review deleted.', 'info');
+      setReviews((current) => current.filter((review) => review.id !== id));
+    } catch {
+      toast('Could not delete review.', 'error');
+    }
   };
 
   return (

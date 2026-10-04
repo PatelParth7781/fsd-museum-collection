@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, SlidersHorizontal, X, Sparkles, Loader2, Heart } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { ArtifactCard } from '@/components/ArtifactCard';
@@ -63,92 +63,83 @@ export default function CollectionPage() {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('categories').select('*').order('name'),
-      supabase.from('historical_periods').select('*').order('start_year'),
-      supabase.from('artists').select('*').order('name'),
-      supabase.from('locations').select('*').order('building'),
+      api.get<Category[]>('/categories'),
+      api.get<HistoricalPeriod[]>('/periods'),
+      api.get<Artist[]>('/artists'),
+      api.get<Location[]>('/locations'),
     ]).then(([cat, per, art, loc]) => {
       setFilterOptions({
-        categories: cat.data ?? [],
-        periods: per.data ?? [],
-        artists: art.data ?? [],
-        locations: loc.data ?? [],
+        categories: cat ?? [],
+        periods: per ?? [],
+        artists: art ?? [],
+        locations: loc ?? [],
       });
-    });
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!session?.user) { setLikedCategories(new Set()); return; }
-    Promise.all([
-      supabase.from('category_likes').select('category_id').eq('user_id', session.user.id),
-    ]).then(([likes]) => {
-      setLikedCategories(new Set((likes.data ?? []).map((l: any) => l.category_id)));
-    });
+    api.get<{ category_id: string }[]>('/categories/likes/me')
+      .then((likes) => {
+        setLikedCategories(new Set((likes ?? []).map((l: any) => String(l.category_id))));
+      })
+      .catch(() => {});
   }, [session?.user]);
 
   useEffect(() => {
-    supabase.from('category_likes').select('category_id').then(({ data }) => {
-      const counts: Record<string, number> = {};
-      (data ?? []).forEach((l: any) => { counts[l.category_id] = (counts[l.category_id] ?? 0) + 1; });
-      setCategoryLikeCounts(counts);
-    });
+    api.get<{ category_id: string }[]>('/categories/likes')
+      .then((data) => {
+        const counts: Record<string, number> = {};
+        (data ?? []).forEach((l: any) => {
+          const cid = String(l.category_id);
+          counts[cid] = (counts[cid] ?? 0) + 1;
+        });
+        setCategoryLikeCounts(counts);
+      })
+      .catch(() => {});
   }, [likedCategories]);
 
   const toggleCategoryLike = async (categoryId: string, categoryName: string) => {
     if (!session?.user) { toast('Please sign in to like categories', 'info'); return; }
-    if (likedCategories.has(categoryId)) {
-      await supabase.from('category_likes').delete().eq('user_id', session.user.id).eq('category_id', categoryId);
-      setLikedCategories((prev) => { const next = new Set(prev); next.delete(categoryId); return next; });
-      toast(`Unliked "${categoryName}"`, 'info');
-    } else {
-      await supabase.from('category_likes').insert({ user_id: session.user.id, category_id: categoryId });
-      setLikedCategories((prev) => new Set(prev).add(categoryId));
-      toast(`Liked "${categoryName}"`, 'success');
+    try {
+      if (likedCategories.has(categoryId)) {
+        await api.del(`/categories/${categoryId}/like`);
+        setLikedCategories((prev) => { const next = new Set(prev); next.delete(categoryId); return next; });
+        toast(`Unliked "${categoryName}"`, 'info');
+      } else {
+        await api.post(`/categories/${categoryId}/like`);
+        setLikedCategories((prev) => new Set(prev).add(categoryId));
+        toast(`Liked "${categoryName}"`, 'success');
+      }
+    } catch (err: any) {
+      toast(err.message || 'Failed to update category like', 'error');
     }
   };
 
   const fetchArtifacts = useCallback(async () => {
     setLoading(true);
     setError(false);
-    let query = supabase
-      .from('artifacts')
-      .select('*, category:categories(*), artist:artists(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*)', { count: 'exact' })
-      .eq('is_public', true);
-
-    if (filters.q) {
-      query = query.or(`name.ilike.%${filters.q}%,accession_number.ilike.%${filters.q}%,origin.ilike.%${filters.q}%,material.ilike.%${filters.q}%`);
-    }
-    if (filters.category) query = query.eq('category_id', filters.category);
-    if (filters.period) query = query.eq('historical_period_id', filters.period);
-    if (filters.artist) query = query.eq('artist_id', filters.artist);
-    if (filters.material) query = query.ilike('material', `%${filters.material}%`);
-    if (filters.location) query = query.eq('current_location_id', filters.location);
-    if (filters.condition) query = query.eq('condition', filters.condition);
-
-    switch (filters.sort) {
-      case 'oldest': query = query.order('created_at', { ascending: true }); break;
-      case 'name_asc': query = query.order('name', { ascending: true }); break;
-      case 'name_desc': query = query.order('name', { ascending: false }); break;
-      default: query = query.order('created_at', { ascending: false });
-    }
-
-    query = query.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-
-    const { data, error, count } = await query;
-    if (error) {
+    try {
+      const res = await api.get<{ data: ArtifactWithRelations[]; count: number }>('/artifacts', {
+        page,
+        limit: PAGE_SIZE,
+        is_public: true,
+        q: filters.q || undefined,
+        category: filters.category || undefined,
+        period: filters.period || undefined,
+        artist: filters.artist || undefined,
+        material: filters.material || undefined,
+        location: filters.location || undefined,
+        condition: filters.condition || undefined,
+        sort: filters.sort || undefined,
+      });
+      setArtifacts(res?.data ?? []);
+      setTotal(res?.count ?? 0);
+    } catch {
       setError(true);
-    } else {
-      const visibleArtifacts = (data ?? []) as ArtifactWithRelations[];
-      const withSummaries = await Promise.all(
-        visibleArtifacts.map(async (artifact) => {
-          const { data: summary } = await supabase.rpc('get_artifact_review_summary', { artifact_uuid: artifact.id });
-          return { ...artifact, review_summary: summary?.[0] ?? null };
-        }),
-      );
-      setArtifacts(withSummaries);
-      setTotal(count ?? 0);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [filters, page]);
 
   useEffect(() => { fetchArtifacts(); }, [fetchArtifacts]);
@@ -170,10 +161,14 @@ export default function CollectionPage() {
     if (!aiSearch.trim()) return;
     setAiLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('ai-search', {
-        body: { query: aiSearch },
-      });
-      if (error || !data) throw new Error('AI search failed');
+      const data = await api.post<{
+        search_text?: string;
+        category_id?: string;
+        period_id?: string;
+        condition?: string;
+        material?: string;
+      }>('/artifacts/ai-search', { query: aiSearch });
+      if (!data) throw new Error('AI search failed');
       setFilters((prev) => ({
         ...prev,
         q: data.search_text || '',

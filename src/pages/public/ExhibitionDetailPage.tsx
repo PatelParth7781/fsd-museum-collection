@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Calendar, MapPin, GalleryVerticalEnd } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { ArrowLeft, Calendar, MapPin } from 'lucide-react';
+import api from '@/lib/api';
 import { FullPageSpinner } from '@/components/ui/Loading';
 import { ErrorState } from '@/components/ui/EmptyState';
 import { ArtifactCard } from '@/components/ArtifactCard';
@@ -18,20 +18,11 @@ export default function ExhibitionDetailPage() {
     if (!id) return;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('exhibitions')
-          .select('*, location:locations(*)')
-          .eq('id', id)
-          .maybeSingle();
-        if (error || !data) { setError(true); return; }
+        const data = await api.get(`/exhibitions/${id}`);
+        if (!data) { setError(true); return; }
         setExhibition(data as ExhibitionWithRelations);
-
-        const { data: eaData } = await supabase
-          .from('exhibition_artifacts')
-          .select('artifact:artifacts(*, category:categories(*), artist:artists(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*))')
-          .eq('exhibition_id', id)
-          .order('display_order', { ascending: true });
-        setArtifacts((eaData ?? []).map((ea: any) => ea.artifact));
+        const arts = (data.exhibition_artifacts ?? []).map((ea: any) => ea.artifact).filter(Boolean);
+        setArtifacts(arts);
       } catch {
         setError(true);
       } finally {

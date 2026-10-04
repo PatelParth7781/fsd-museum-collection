@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Heart } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { ArtifactCard } from '@/components/ArtifactCard';
 import { GridSkeleton } from '@/components/ui/Loading';
@@ -13,15 +13,19 @@ export default function FavoritesPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!session?.user) return;
-    (async () => {
-      const { data } = await supabase
-        .from('favorites')
-        .select('artifact:artifacts(*, category:categories(*), artist:artists(*), historical_period:historical_periods(*), current_location:locations(*), artifact_images(*))')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
-      setFavorites((data ?? []).map((f: any) => f.artifact));
+    if (!session?.user) {
       setLoading(false);
+      return;
+    }
+    (async () => {
+      try {
+        const data = await api.get('/favorites');
+        setFavorites((data ?? []).map((f: any) => f.artifact).filter(Boolean));
+      } catch {
+        setFavorites([]);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [session?.user]);
 

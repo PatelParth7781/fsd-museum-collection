@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, User, Calendar, Package as PackageIcon,
 } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
 import { logAction } from '@/lib/audit';
@@ -46,29 +46,32 @@ export default function AdminCart() {
   const fetchCarts = useCallback(async () => {
     setLoading(true);
     setError(false);
-    let query = supabase
-      .from('carts')
-      .select('*, user:profiles(id, full_name, email), cart_items(*, artifact:artifacts(*, artifact_images(*), category:categories(*)))')
-      .order('created_at', { ascending: false });
-    if (statusFilter) query = query.eq('status', statusFilter);
-    const { data, error } = await query;
-    if (error) { setError(true); setLoading(false); return; }
-    let filtered = data ?? [];
-    if (search) {
-      filtered = filtered.filter((c: any) =>
-        c.user?.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-        c.user?.email?.toLowerCase().includes(search.toLowerCase()) ||
-        c.cart_items?.some((ci: any) => ci.artifact?.name?.toLowerCase().includes(search.toLowerCase()))
-      );
+    try {
+      const data = await api.get('/cart/admin/list', { status: statusFilter || undefined });
+      let filtered = data ?? [];
+      if (search) {
+        filtered = filtered.filter((c: any) =>
+          c.user?.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+          c.user?.email?.toLowerCase().includes(search.toLowerCase()) ||
+          c.cart_items?.some((ci: any) => ci.artifact?.name?.toLowerCase().includes(search.toLowerCase()))
+        );
+      }
+      setCarts(filtered as CartWithRelations[]);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
     }
-    setCarts(filtered as CartWithRelations[]);
-    setLoading(false);
   }, [search, statusFilter]);
 
   useEffect(() => {
     fetchCarts();
-    supabase.from('artifacts').select('*, artifact_images(*), category:categories(*)').eq('is_public', true).order('name').limit(100).then(({ data }) => setArtifacts(data ?? []));
-    supabase.from('profiles').select('*').order('full_name').then(({ data }) => setUsers(data ?? []));
+    api.get('/artifacts', { is_public: true, limit: 100 })
+      .then((res) => setArtifacts(res.artifacts ?? []))
+      .catch(() => {});
+    api.get('/auth/users')
+      .then((data) => setUsers(data ?? []))
+      .catch(() => {});
   }, [fetchCarts]);
 
   const openAddModal = (cart: CartWithRelations) => {
@@ -84,51 +87,57 @@ export default function AdminCart() {
     if (!addForm.artifact_id) { toast('Please select an artifact', 'error'); return; }
     if (addForm.quantity < 1) { toast('Quantity must be at least 1', 'error'); return; }
     setAddLoading(true);
-    const { error } = await supabase.from('cart_items').insert({
-      cart_id: addTargetCart.id,
-      artifact_id: addForm.artifact_id,
-      quantity: addForm.quantity,
-      notes: addForm.notes || null,
-      added_by: profile?.id,
-    });
-    if (error) {
-      if (error.code === '23505') toast('This artifact is already in the cart', 'error');
-      else toast('Failed to add item to cart', 'error');
+    try {
+      await api.post(`/cart/admin/${addTargetCart.id}/items`, {
+        artifact_id: addForm.artifact_id,
+        quantity: addForm.quantity,
+        notes: addForm.notes || undefined,
+      });
+      toast('Item added to cart', 'success');
+      const artName = artifacts.find((a) => a.id === addForm.artifact_id)?.name ?? 'Unknown';
+      await logAction('cart_item_added', 'cart', addTargetCart.id, `Added "${artName}" (x${addForm.quantity}) to cart by ${profile?.email}`);
+      setAddModalOpen(false);
+      fetchCarts();
+    } catch (err: any) {
+      toast(err.message || 'Failed to add item to cart', 'error');
+    } finally {
       setAddLoading(false);
-      return;
     }
-    toast('Item added to cart', 'success');
-    const artName = artifacts.find((a) => a.id === addForm.artifact_id)?.name ?? 'Unknown';
-    await logAction('cart_item_added', 'cart', addTargetCart.id, `Added "${artName}" (x${addForm.quantity}) to cart by ${profile?.email}`);
-    setAddLoading(false);
-    setAddModalOpen(false);
-    fetchCarts();
   };
 
   const handleRemoveItem = async () => {
     if (!deleteItemTarget) return;
-    const { error } = await supabase.from('cart_items').delete().eq('id', deleteItemTarget.itemId);
-    if (error) { toast('Failed to remove item', 'error'); return; }
-    toast('Item removed from cart', 'success');
-    await logAction('cart_item_removed', 'cart', deleteItemTarget.cartId, `Removed item from cart by ${profile?.email}`);
-    fetchCarts();
+    try {
+      await api.del(`/cart/admin/${deleteItemTarget.cartId}/items/${deleteItemTarget.itemId}`);
+      toast('Item removed from cart', 'success');
+      await logAction('cart_item_removed', 'cart', deleteItemTarget.cartId, `Removed item from cart by ${profile?.email}`);
+      fetchCarts();
+    } catch (err: any) {
+      toast(err.message || 'Failed to remove item', 'error');
+    }
   };
 
   const handleDeleteCart = async () => {
     if (!deleteCartTarget) return;
-    const { error } = await supabase.from('carts').delete().eq('id', deleteCartTarget);
-    if (error) { toast('Failed to delete cart', 'error'); return; }
-    toast('Cart deleted', 'success');
-    await logAction('cart_deleted', 'cart', deleteCartTarget, `Cart deleted by ${profile?.email}`);
-    fetchCarts();
+    try {
+      await api.del(`/cart/admin/${deleteCartTarget}`);
+      toast('Cart deleted', 'success');
+      await logAction('cart_deleted', 'cart', deleteCartTarget, `Cart deleted by ${profile?.email}`);
+      fetchCarts();
+    } catch (err: any) {
+      toast(err.message || 'Failed to delete cart', 'error');
+    }
   };
 
   const handleStatusChange = async (cartId: string, status: string) => {
-    const { error } = await supabase.from('carts').update({ status }).eq('id', cartId);
-    if (error) { toast('Failed to update cart status', 'error'); return; }
-    toast('Cart status updated', 'success');
-    await logAction('cart_status_changed', 'cart', cartId, `Cart status changed to "${status}" by ${profile?.email}`);
-    fetchCarts();
+    try {
+      await api.put(`/cart/admin/${cartId}`, { status });
+      toast('Cart status updated', 'success');
+      await logAction('cart_status_changed', 'cart', cartId, `Cart status changed to "${status}" by ${profile?.email}`);
+      fetchCarts();
+    } catch (err: any) {
+      toast(err.message || 'Failed to update cart status', 'error');
+    }
   };
 
   const openCreateModal = () => {
@@ -140,18 +149,22 @@ export default function AdminCart() {
     e.preventDefault();
     if (!createForm.user_id) { toast('Please select a user', 'error'); return; }
     setCreateLoading(true);
-    const { data, error } = await supabase.from('carts').insert({
-      user_id: createForm.user_id,
-      notes: createForm.notes || null,
-      status: 'active',
-    }).select('id').single();
-    if (error) { toast('Failed to create cart', 'error'); setCreateLoading(false); return; }
-    toast('Cart created', 'success');
-    const userName = users.find((u) => u.id === createForm.user_id)?.full_name ?? 'Unknown';
-    await logAction('cart_created', 'cart', data.id, `Cart created for "${userName}" by ${profile?.email}`);
-    setCreateLoading(false);
-    setCreateModalOpen(false);
-    fetchCarts();
+    try {
+      const data = await api.post('/cart/admin', {
+        user_id: createForm.user_id,
+        notes: createForm.notes || undefined,
+        status: 'active',
+      });
+      toast('Cart created', 'success');
+      const userName = users.find((u) => u.id === createForm.user_id)?.full_name ?? 'Unknown';
+      await logAction('cart_created', 'cart', data.id, `Cart created for "${userName}" by ${profile?.email}`);
+      setCreateModalOpen(false);
+      fetchCarts();
+    } catch (err: any) {
+      toast(err.message || 'Failed to create cart', 'error');
+    } finally {
+      setCreateLoading(false);
+    }
   };
 
   const filteredArtifacts = artifacts.filter((a) =>

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { ScrollText, Search } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { supabase } from '@/lib/supabase';
+import api from '@/lib/api';
 import { Pagination } from '@/components/ui/Pagination';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { EmptyState, ErrorState } from '@/components/ui/EmptyState';
@@ -22,14 +22,20 @@ export default function AdminAuditLogs() {
   const fetch = useCallback(async () => {
     setLoading(true);
     setError(false);
-    let query = supabase.from('audit_logs').select('*, user:profiles(*)', { count: 'exact' });
-    if (search) query = query.or(`action.ilike.%${search}%,description.ilike.%${search}%`);
-    if (actionFilter) query = query.eq('action', actionFilter);
-    query = query.order('created_at', { ascending: false }).range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-    const { data, error, count } = await query;
-    if (error) setError(true);
-    else { setLogs(data ?? []); setTotal(count ?? 0); }
-    setLoading(false);
+    try {
+      const res = await api.get('/audit', {
+        page,
+        limit: PAGE_SIZE,
+        search,
+        action: actionFilter,
+      });
+      setLogs(res.data ?? []);
+      setTotal(res.total ?? res.count ?? 0);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [search, actionFilter, page]);
 
   useEffect(() => { fetch(); }, [fetch]);
