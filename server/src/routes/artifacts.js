@@ -105,11 +105,17 @@ router.get('/', async (req, res) => {
     if (category) query.category_id = category;
     if (artist) query.artist_id = artist;
     if (period) query.historical_period_id = period;
-    if (status) query.status = status;
+    if (status) {
+      if (status === 'published') {
+        query.is_public = true;
+      } else {
+        query.status = status;
+      }
+    }
     if (condition) query.condition = condition;
     if (location) query.current_location_id = location;
     if (material) query.material = { $regex: material, $options: 'i' };
-    if (is_public !== undefined) query.is_public = is_public === 'true';
+    if (is_public !== undefined) query.is_public = is_public === 'true' || is_public === true;
 
     const searchText = search || q;
     if (searchText) {
@@ -180,7 +186,9 @@ router.get('/', async (req, res) => {
 
     res.json({
       data,
+      artifacts: data,
       count: total,
+      total,
       pagination: {
         page: Number(page),
         limit: Number(limit),

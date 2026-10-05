@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+    "seed:artifacts": "node src/scripts/seedArtifacts.js",
+    "seed:images": "node src/scripts/updateImages.js"
   },
   "keywords": [
     "mongodb",

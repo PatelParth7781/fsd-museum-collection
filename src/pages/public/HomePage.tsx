@@ -8,7 +8,7 @@ import { ErrorState } from '@/components/ui/EmptyState';
 import { Pagination } from '@/components/ui/Pagination';
 import type { ArtifactWithRelations, Category, ExhibitionWithRelations } from '@/types';
 
-const FEATURED_PAGE_SIZE = 8;
+const FEATURED_PAGE_SIZE = 6;
 
 export default function HomePage() {
   const [featured, setFeatured] = useState<ArtifactWithRelations[]>([]);
@@ -23,18 +23,20 @@ export default function HomePage() {
   useEffect(() => {
     async function load() {
       try {
-        const [catRes, exhRes, periodRes, artistRes, exhCountRes] = await Promise.all([
+        const [catRes, exhRes, periodRes, artistRes, exhCountRes, artCountRes] = await Promise.all([
           api.get('/categories', { limit: 8 }),
           api.get('/exhibitions', { status: 'active', limit: 3 }),
           api.get('/periods'),
           api.get('/artists'),
           api.get('/exhibitions', { status: 'active' }),
+          api.get<{ total?: number; count?: number }>('/artifacts', { limit: 1 }),
         ]);
 
         setCategories(catRes ?? []);
         setExhibitions(exhRes ?? []);
+        const totalArtifacts = artCountRes?.total ?? artCountRes?.count ?? 0;
         setStats({
-          artifacts: 0,
+          artifacts: totalArtifacts,
           periods: Array.isArray(periodRes) ? periodRes.length : 0,
           artists: Array.isArray(artistRes) ? artistRes.length : 0,
           exhibitions: Array.isArray(exhCountRes) ? exhCountRes.length : 0,
@@ -53,14 +55,22 @@ export default function HomePage() {
       setLoading(true);
       setError(false);
       try {
-        const res = await api.get('/artifacts', {
+        const res = await api.get<{
+          data?: ArtifactWithRelations[];
+          artifacts?: ArtifactWithRelations[];
+          count?: number;
+          total?: number;
+        }>('/artifacts', {
           is_public: true,
           page: featuredPage,
           limit: FEATURED_PAGE_SIZE,
+          sort: 'newest',
         });
-        setFeatured(res.artifacts ?? []);
-        setFeaturedTotal(res.total ?? 0);
-        setStats((prev) => ({ ...prev, artifacts: res.total ?? 0 }));
+        const items = res?.data ?? res?.artifacts ?? [];
+        const totalCount = res?.total ?? res?.count ?? 0;
+        setFeatured(items);
+        setFeaturedTotal(totalCount);
+        setStats((prev) => ({ ...prev, artifacts: prev.artifacts || totalCount }));
       } catch {
         setError(true);
       } finally {
@@ -131,12 +141,12 @@ export default function HomePage() {
           </Link>
         </div>
         {loading ? (
-          <GridSkeleton count={8} />
+          <GridSkeleton count={FEATURED_PAGE_SIZE} />
         ) : error ? (
           <ErrorState message="Failed to load featured artifacts. Please try again." />
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {featured.map((a) => (
                 <ArtifactCard key={a.id} artifact={a} />
               ))}
